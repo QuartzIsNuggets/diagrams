@@ -18,6 +18,7 @@
     "@mathjax/src": "^4"
   },
   "devDependencies": {
+    "jsdom": "^30",
     "lefthook": "^1",
     "oxlint": "^1",
     "prettier": "^3",

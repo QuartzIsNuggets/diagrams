@@ -2,11 +2,13 @@
 //
 // SPDX-License-Identifier: MIT
 
-import { createCanvas } from "./canvas";
+import { createCanvas, enablePlopping } from "./canvas";
 
 const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) {
   throw new Error("Missing #app mount point in index.html");
 }
 
-app.append(createCanvas());
+const canvas = createCanvas();
+enablePlopping(canvas);
+app.append(canvas);
