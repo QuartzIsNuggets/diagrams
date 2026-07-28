@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Alexis Ronez <alexis.ronez@mailfence.com>
+//
+// SPDX-License-Identifier: MIT
+
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 /**

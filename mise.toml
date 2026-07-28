@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Alexis Ronez <alexis.ronez@mailfence.com>
+#
+# SPDX-License-Identifier: MIT
+
 # Versions pinned exact for a reproducible toolchain (bump deliberately).
 [tools]
 node = "24.18.0"

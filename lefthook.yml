@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Alexis Ronez <alexis.ronez@mailfence.com>
+#
+# SPDX-License-Identifier: MIT
+
 pre-commit:
   parallel: true
   commands:
@@ -10,3 +14,10 @@ pre-commit:
       run: pnpm oxlint {staged_files}
     typecheck:
       run: pnpm typecheck
+    # Every file needs an SPDX header (see agents-working-files/AGENTS.md).
+    # Silent when compliant; re-runs to list the offending files when not.
+    reuse:
+      env:
+        # Local python-debian noise on stderr, unrelated to the lint result.
+        PYTHONWARNINGS: ignore
+      run: reuse lint --quiet || reuse lint --lines

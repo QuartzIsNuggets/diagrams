@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Alexis Ronez <alexis.ronez@mailfence.com>
+#
+# SPDX-License-Identifier: MIT
+
 [submodule "agents-working-files"]
 	path = agents-working-files
 	url = git@github.com:QuartzIsNuggets/diagrams-agent-working-files.git
