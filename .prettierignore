@@ -1,0 +1,6 @@
+dist
+pnpm-lock.yaml
+
+# Agent working files live in their own submodule and are versioned there,
+# not by the code project's tooling (see agents-working-files/AGENTS.md).
+agents-working-files

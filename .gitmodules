@@ -1,0 +1,3 @@
+[submodule "agents-working-files"]
+	path = agents-working-files
+	url = git@github.com:QuartzIsNuggets/diagrams-agent-working-files.git

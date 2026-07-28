@@ -1,0 +1,4 @@
+# Versions pinned exact for a reproducible toolchain (bump deliberately).
+[tools]
+node = "24.18.0"
+pnpm = "10.34.5"

@@ -1,0 +1,12 @@
+pre-commit:
+  parallel: true
+  commands:
+    format:
+      glob: "*.{ts,js,json,css,md,html}"
+      run: pnpm prettier --write {staged_files}
+      stage_fixed: true
+    lint:
+      glob: "*.{ts,js}"
+      run: pnpm oxlint {staged_files}
+    typecheck:
+      run: pnpm typecheck
