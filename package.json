@@ -15,9 +15,11 @@
     "prepare": "lefthook install"
   },
   "dependencies": {
+    "@mathjax/mathjax-newcm-font": "^4",
     "@mathjax/src": "^4"
   },
   "devDependencies": {
+    "@types/node": "^26.1.2",
     "jsdom": "^30",
     "lefthook": "^1",
     "oxlint": "^1",

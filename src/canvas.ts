@@ -2,13 +2,13 @@
 //
 // SPDX-License-Identifier: MIT
 
-const SVG_NS = "http://www.w3.org/2000/svg";
+import { INK } from "./palette";
+
+/** The namespace every element on the canvas is created in. */
+export const SVG_NS = "http://www.w3.org/2000/svg";
 
 /** Radius of a term-dot, in canvas units. */
 const DOT_RADIUS = 5;
-
-/** Fill of a term-dot. A presentation attribute, not CSS, so it survives export. */
-const DOT_FILL = "#111111";
 
 /**
  * Create the diagram canvas — the full-viewport `<svg>` "window".
@@ -51,6 +51,6 @@ function createTermDot(x: number, y: number): SVGCircleElement {
   dot.setAttribute("cx", String(x));
   dot.setAttribute("cy", String(y));
   dot.setAttribute("r", String(DOT_RADIUS));
-  dot.setAttribute("fill", DOT_FILL);
+  dot.setAttribute("fill", INK);
   return dot;
 }
