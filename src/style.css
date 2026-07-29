@@ -28,17 +28,33 @@ body {
   background: #ffffff;
 }
 
-/* The LaTeX bar floats over the canvas rather than taking room from it. */
-.label-form {
+/* The controls float over the canvas rather than taking room from it: the LaTeX
+   bar in one bottom corner, the Export button in the other. */
+.label-form,
+.export-button {
   position: fixed;
   bottom: 16px;
+  font:
+    14px system-ui,
+    sans-serif;
+}
+
+.label-form {
   left: 16px;
   display: flex;
   align-items: center;
   gap: 8px;
-  font:
-    14px system-ui,
-    sans-serif;
+}
+
+.export-button {
+  right: 16px;
+}
+
+/* Form controls do not inherit type by default; the bar's children have to be
+   told to take the bar's. The Export button is styled above in its own right. */
+.label-input,
+.label-form button {
+  font: inherit;
 }
 
 .label-input {
@@ -46,15 +62,14 @@ body {
   padding: 6px 8px;
   border: 1px solid #cccccc;
   border-radius: 4px;
-  font: inherit;
 }
 
-.label-form button {
+.label-form button,
+.export-button {
   padding: 6px 12px;
   border: 1px solid #cccccc;
   border-radius: 4px;
   background: #f4f4f4;
-  font: inherit;
 }
 
 /* Empty until a label is refused, so it takes no room the rest of the time. */

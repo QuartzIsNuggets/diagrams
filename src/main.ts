@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 import { createCanvas, enablePlopping } from "./canvas";
+import { createExportButton, enableExporting } from "./export-svg";
 import { createLabelForm, enableLabelPlacing, prewarmTypesetting } from "./mathjax-label";
 
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -16,7 +17,10 @@ enablePlopping(canvas);
 const labelForm = createLabelForm();
 enableLabelPlacing(canvas, labelForm);
 
-app.append(canvas, labelForm);
+const exportButton = createExportButton();
+enableExporting(canvas, exportButton);
+
+app.append(canvas, labelForm, exportButton);
 
 // The canvas and the bar are on screen now; fetch the typesetter behind them so
 // it is ready by the time the first label is submitted.
