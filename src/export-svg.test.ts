@@ -10,8 +10,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createCanvas, enablePlopping, SVG_NS } from "./canvas";
-import { createExportButton, enableExporting, serializeCanvas } from "./export-svg";
-import { createLabelForm, enableLabelPlacing } from "./mathjax-label";
+import { createExportButton, serializeCanvas } from "./export-svg";
+import { createLabelForm } from "./label-form";
 
 const LATEX = "\\Sigma_{(x:A)} P(x)";
 
@@ -48,8 +48,7 @@ function plopDotAt(x: number, y: number): void {
 
 /** Typeset a label onto the canvas through the real form and pipeline. */
 async function placeLabel(latex: string): Promise<void> {
-  const form = createLabelForm();
-  enableLabelPlacing(canvas, form);
+  const form = createLabelForm(canvas);
   document.body.append(form);
   const before = canvas.querySelectorAll("g.math-label").length;
 
@@ -89,8 +88,7 @@ const { createObjectURL, revokeObjectURL } = URL;
 beforeEach(() => {
   canvas = createCanvas();
   enablePlopping(canvas);
-  button = createExportButton();
-  enableExporting(canvas, button);
+  button = createExportButton(canvas);
   document.body.replaceChildren(canvas, button);
   sizeCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
 

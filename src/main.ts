@@ -3,8 +3,9 @@
 // SPDX-License-Identifier: MIT
 
 import { createCanvas, enablePlopping } from "./canvas";
-import { createExportButton, enableExporting } from "./export-svg";
-import { createLabelForm, enableLabelPlacing, prewarmTypesetting } from "./mathjax-label";
+import { createExportButton } from "./export-svg";
+import { createLabelForm } from "./label-form";
+import { prewarmTypesetting } from "./typesetting";
 
 const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) {
@@ -14,11 +15,8 @@ if (!app) {
 const canvas = createCanvas();
 enablePlopping(canvas);
 
-const labelForm = createLabelForm();
-enableLabelPlacing(canvas, labelForm);
-
-const exportButton = createExportButton();
-enableExporting(canvas, exportButton);
+const labelForm = createLabelForm(canvas);
+const exportButton = createExportButton(canvas);
 
 app.append(canvas, labelForm, exportButton);
 

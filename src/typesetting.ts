@@ -2,26 +2,18 @@
 //
 // SPDX-License-Identifier: MIT
 
-import { SVG_NS } from "./canvas";
 import { loadFontRange } from "./font-ranges";
-import { INK } from "./palette";
 
 /**
- * MathJax's SVG output measures glyphs in thousandths of an em, so a `<g>` of
- * its paths is scaled by `em / 1000` to reach canvas units.
+ * The unit the returned geometry is measured in: thousandths of an em.
+ *
+ * Part of the interface, not an internal detail — a caller cannot place a
+ * typeset run without it. Scale by `em / UNITS_PER_EM` to reach canvas units.
  */
-const UNITS_PER_EM = 1000;
-
-/** Type size of a placed label, in canvas units. */
-const LABEL_EM = 24;
-
-/** Where the first label's baseline starts, and how far each next one drops. */
-const LABEL_ORIGIN_X = 40;
-const LABEL_ORIGIN_Y = 60;
-const LABEL_LINE_HEIGHT = 56;
+export const UNITS_PER_EM = 1000;
 
 /**
- * The MathJax pipeline, booted once on first use.
+ * The typesetting pipeline, booted once on first use.
  *
  * MathJax v4 is a large, purely optional dependency, so its modules are pulled
  * in dynamically: the app starts without them and the first submit awaits the
@@ -40,11 +32,11 @@ function mathjaxPipeline(): Promise<(latex: string) => Promise<Element>> {
   return pipeline;
 }
 
-/** How long to wait for an idle moment before loading MathJax anyway. */
+/** How long to wait for an idle moment before loading the engine anyway. */
 const PREWARM_TIMEOUT = 2000;
 
 /**
- * Start loading MathJax once the page has drawn, so the first label does not
+ * Start loading the engine once the page has drawn, so the first label does not
  * pay for it.
  *
  * The engine is a ~1 MB chunk fetched on demand; without this the user waits
@@ -117,24 +109,27 @@ async function bootMathJax(): Promise<(latex: string) => Promise<Element>> {
 
 /**
  * Typeset `latex` into a `<g>` of glyph `<path>`s — real geometry, never a
- * `<foreignObject>` wrapping HTML.
+ * `<foreignObject>`.
  *
- * The `<g>` comes back unpositioned, in MathJax's own font units with its
- * origin at the label's left baseline point; the caller supplies the transform
- * that scales and places it. Awaiting this awaits MathJax's own async start-up,
- * so the first call is as reliable as the tenth.
+ * What comes back is bare geometry and nothing else: no class, no colour, no
+ * placement. It is in the engine's own font units ({@link UNITS_PER_EM}) with
+ * its origin at the left baseline point, and it carries a transform of its own
+ * — so a caller placing it needs to wrap it rather than transform it directly.
+ * Dressing a run and putting it somewhere is the caller's business; this module
+ * only knows how to draw one.
+ *
+ * Awaiting this awaits the engine's own async start-up, so the first call is as
+ * reliable as the tenth.
  */
-export async function typesetLatex(latex: string): Promise<SVGGElement> {
+export async function typesetLatex(latex: string): Promise<Element> {
   const typeset = await mathjaxPipeline();
   const container = await typeset(latex).catch(explainMissingRange);
+  const glyphs = glyphsOf(container);
 
-  const label = document.createElementNS(SVG_NS, "g");
-  label.classList.add("math-label");
-  // MathJax paints its glyphs in `currentColor`; naming the colour here keeps
-  // the label's ink with the label rather than in the page's stylesheet.
-  label.setAttribute("color", INK);
-  label.append(glyphsOf(container));
-  return label;
+  // Cut free of the packaging it was found in, so what the caller holds is the
+  // geometry alone rather than a node still rooted in an <mjx-container>.
+  glyphs.remove();
+  return glyphs;
 }
 
 /**
@@ -143,11 +138,11 @@ export async function typesetLatex(latex: string): Promise<SVGGElement> {
  *
  * The return is an `<mjx-container>` (an HTML element) wrapping a standalone
  * `<svg>`, itself wrapping one `<g>` that flips to y-up font coordinates. Only
- * that `<g>` belongs on the canvas — the rest is packaging.
+ * that `<g>` is geometry — the rest is packaging.
  *
  * A TeX error does not throw: MathJax renders the message as an `merror` box of
  * `<text>` sized by a browser measurement, which under jsdom is `NaN`. Letting
- * that onto the canvas would put an unremovable, unexportable node into the
+ * that reach a caller would put an unremovable, unexportable node into the
  * document, so a failed parse is raised as the error it is.
  *
  * A glyph MathJax has no outline for is worse, because it *looks* fine: it comes
@@ -197,87 +192,4 @@ function explainMissingRange(failure: unknown): never {
   throw new Error(
     `The "${range}" glyph range is not bundled, so those characters have no outlines`,
   );
-}
-
-/** The LaTeX bar: a text input and the button that typesets what is in it. */
-export function createLabelForm(): HTMLFormElement {
-  const form = document.createElement("form");
-  form.classList.add("label-form");
-
-  const input = document.createElement("input");
-  input.type = "text";
-  input.name = "latex";
-  input.classList.add("label-input");
-  input.placeholder = "\\Sigma_{(x:A)} P(x)";
-  input.setAttribute("aria-label", "LaTeX label");
-
-  const button = document.createElement("button");
-  button.type = "submit";
-  button.textContent = "Typeset";
-
-  // Rejected LaTeX never reaches the canvas, so the reason has to show here or
-  // the submit looks like it did nothing.
-  const error = document.createElement("p");
-  error.classList.add("label-error");
-  error.setAttribute("role", "alert");
-
-  form.append(input, button, error);
-  return form;
-}
-
-/**
- * Make submitting `form` typeset its LaTeX onto `canvas`.
- *
- * Labels accumulate the way term-dots do, each one dropping a line below the
- * last so successive submits stay legible rather than piling up on one spot.
- */
-export function enableLabelPlacing(canvas: SVGSVGElement, form: HTMLFormElement): void {
-  // Placements run one at a time: each reads its row off the canvas, so two in
-  // flight at once would both see the same row and land on top of each other.
-  let pending: Promise<void> = Promise.resolve();
-
-  form.addEventListener("submit", (event: SubmitEvent) => {
-    event.preventDefault();
-    const input = form.querySelector("input");
-    const latex = input?.value.trim();
-    if (!input || !latex) {
-      return;
-    }
-    pending = pending
-      .then(async () => {
-        await placeLabel(canvas, latex);
-        // Clearing here rather than on submit keeps the message owned by
-        // whichever placement finished last: an earlier one still in flight
-        // would otherwise report its failure over a later success.
-        setError(form, "");
-        // Only clear the input once the label is up, and only if the user has
-        // not moved on to typing the next one.
-        if (input.value.trim() === latex) {
-          input.value = "";
-        }
-      })
-      // A rejection must not poison the chain, or one bad label would silence
-      // every submit after it. The source stays in the input to be corrected.
-      .catch((failure: unknown) => {
-        setError(form, failure instanceof Error ? failure.message : String(failure));
-      });
-  });
-}
-
-function setError(form: HTMLFormElement, message: string): void {
-  const error = form.querySelector(".label-error");
-  if (error) {
-    error.textContent = message;
-  }
-}
-
-async function placeLabel(canvas: SVGSVGElement, latex: string): Promise<void> {
-  const label = await typesetLatex(latex);
-  // Read the row from the canvas itself rather than a counter: the live tree is
-  // the document, so this stays right however labels come and go.
-  const row = canvas.querySelectorAll("g.math-label").length;
-  const x = LABEL_ORIGIN_X;
-  const y = LABEL_ORIGIN_Y + row * LABEL_LINE_HEIGHT;
-  label.setAttribute("transform", `translate(${x},${y}) scale(${LABEL_EM / UNITS_PER_EM})`);
-  canvas.append(label);
 }

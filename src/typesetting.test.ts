@@ -7,7 +7,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { prewarmTypesetting, typesetLatex } from "./mathjax-label";
+import { prewarmTypesetting, typesetLatex } from "./typesetting";
 
 const LATEX = "\\Sigma_{(x:A)} P(x)";
 
@@ -19,8 +19,8 @@ describe("prewarming the typesetter", () => {
   it("leaves MathJax ready, so a label typesets off the warmed engine", async () => {
     await prewarmTypesetting();
 
-    const label = await typesetLatex(LATEX);
-    expect(label.querySelectorAll("path").length).toBeGreaterThan(0);
+    const glyphs = await typesetLatex(LATEX);
+    expect(glyphs.querySelectorAll("path").length).toBeGreaterThan(0);
   });
 
   it("boots one engine however many callers ask for it", async () => {
@@ -82,46 +82,46 @@ describe("when the prewarm runs", () => {
 
 describe("typesetting LaTeX", () => {
   it("returns an SVG <g> whose glyphs are <path> geometry", async () => {
-    const label = await typesetLatex(LATEX);
+    const glyphs = await typesetLatex(LATEX);
 
-    expect(label.tagName).toBe("g");
-    expect(label.namespaceURI).toBe("http://www.w3.org/2000/svg");
-    expect(label.querySelectorAll("path").length).toBeGreaterThan(0);
+    expect(glyphs.tagName).toBe("g");
+    expect(glyphs.namespaceURI).toBe("http://www.w3.org/2000/svg");
+    expect(glyphs.querySelectorAll("path").length).toBeGreaterThan(0);
   });
 
   it("leaks no HTML or MathML into the canvas — every node is SVG", async () => {
-    const label = await typesetLatex(LATEX);
+    const glyphs = await typesetLatex(LATEX);
 
-    const foreign = descendantsOf(label).filter(
+    const foreign = descendantsOf(glyphs).filter(
       (node) => node.namespaceURI !== "http://www.w3.org/2000/svg",
     );
     expect(foreign).toEqual([]);
-    expect(label.querySelector("foreignObject")).toBeNull();
-    expect(label.closest("mjx-container")).toBeNull();
+    expect(glyphs.querySelector("foreignObject")).toBeNull();
+    expect(glyphs.closest("mjx-container")).toBeNull();
   });
 
   it("draws every mark as geometry — no <text> falling back on a system font", async () => {
-    const label = await typesetLatex(LATEX);
+    const glyphs = await typesetLatex(LATEX);
 
     // MathJax emits <text> only when it has no outline for a glyph, which would
     // leave the export depending on whatever font the viewer happens to have.
-    expect(label.querySelector("text")).toBeNull();
-    const marks = descendantsOf(label).filter((node) => node.children.length === 0);
+    expect(glyphs.querySelector("text")).toBeNull();
+    const marks = descendantsOf(glyphs).filter((node) => node.children.length === 0);
     expect(marks.length).toBeGreaterThan(0);
     expect(marks.map((node) => node.tagName)).toEqual(marks.map(() => "path"));
   });
 
   it("inlines every glyph, with no <defs>/<use> font cache to leave behind", async () => {
-    const label = await typesetLatex(LATEX);
+    const glyphs = await typesetLatex(LATEX);
 
-    expect(label.querySelector("defs")).toBeNull();
-    expect(label.querySelector("use")).toBeNull();
+    expect(glyphs.querySelector("defs")).toBeNull();
+    expect(glyphs.querySelector("use")).toBeNull();
   });
 
-  it("carries its ink as a presentation attribute, so a serialized canvas keeps its look", async () => {
-    const label = await typesetLatex(LATEX);
+  it("hands back geometry alone, cut free of MathJax's own packaging", async () => {
+    const glyphs = await typesetLatex(LATEX);
 
-    expect(label.getAttribute("color")).toBeTruthy();
+    expect(glyphs.parentElement).toBeNull();
   });
 });
 
@@ -155,10 +155,10 @@ describe("glyph ranges the font keeps out of its main entry", () => {
 
   it("draws them as outlines rather than falling back to system text", async () => {
     for (const latex of NEEDS_A_RANGE) {
-      const label = await typesetLatex(latex);
+      const glyphs = await typesetLatex(latex);
 
-      expect(label.querySelector("text"), latex).toBeNull();
-      expect(label.querySelectorAll("path").length, latex).toBeGreaterThan(0);
+      expect(glyphs.querySelector("text"), latex).toBeNull();
+      expect(glyphs.querySelectorAll("path").length, latex).toBeGreaterThan(0);
     }
   });
 
@@ -198,13 +198,13 @@ describe("a boot that fails", () => {
     // A fresh module graph, so this exercises its own pipeline memo rather than
     // the one the tests above have already warmed.
     vi.resetModules();
-    const isolated = await import("./mathjax-label");
+    const isolated = await import("./typesetting");
 
     await expect(isolated.typesetLatex(LATEX)).rejects.toThrow("engine failed to start");
 
     bootFails = false;
-    const label = await isolated.typesetLatex(LATEX);
-    expect(label.querySelectorAll("path").length).toBeGreaterThan(0);
+    const glyphs = await isolated.typesetLatex(LATEX);
+    expect(glyphs.querySelectorAll("path").length).toBeGreaterThan(0);
 
     vi.doUnmock(MODULE);
     vi.resetModules();

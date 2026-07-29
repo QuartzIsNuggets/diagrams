@@ -47,19 +47,27 @@ export function serializeCanvas(canvas: SVGSVGElement): string {
   return `<?xml version="1.0" encoding="UTF-8"?>\n${new XMLSerializer().serializeToString(standalone)}\n`;
 }
 
-/** The button that downloads the diagram. */
-export function createExportButton(): HTMLButtonElement {
+/**
+ * The button that downloads `canvas`, wired and ready to append.
+ *
+ * It comes back already listening rather than as an inert element a caller has
+ * to remember to enable: the button exists for this one action, so there is no
+ * useful moment between the two and nothing for a caller to get in the wrong
+ * order. Where it goes on the page is still theirs to decide.
+ */
+export function createExportButton(canvas: SVGSVGElement): HTMLButtonElement {
   const button = document.createElement("button");
   // Explicitly not a submit button: it sits outside the LaTeX form, and the
   // default type would make it one wherever it is later moved.
   button.type = "button";
   button.classList.add("export-button");
   button.textContent = "Export SVG";
+  enableExporting(canvas, button);
   return button;
 }
 
 /** Make pressing `button` download `canvas` as a standalone `.svg` file. */
-export function enableExporting(canvas: SVGSVGElement, button: HTMLButtonElement): void {
+function enableExporting(canvas: SVGSVGElement, button: HTMLButtonElement): void {
   button.addEventListener("click", () => {
     download(serializeCanvas(canvas), EXPORT_FILENAME);
   });

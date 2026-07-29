@@ -3,12 +3,12 @@
 // SPDX-License-Identifier: MIT
 
 // The LaTeX bar and what it puts on the canvas. The typesetting engine behind
-// it is covered in mathjax-label.test.ts.
+// it is covered in typesetting.test.ts.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createCanvas } from "./canvas";
-import { createLabelForm, enableLabelPlacing } from "./mathjax-label";
+import { createLabelForm } from "./label-form";
 
 const LATEX = "\\Sigma_{(x:A)} P(x)";
 
@@ -33,8 +33,7 @@ async function waitForLabels(count: number): Promise<SVGGElement[]> {
 
 beforeEach(() => {
   canvas = createCanvas();
-  form = createLabelForm();
-  enableLabelPlacing(canvas, form);
+  form = createLabelForm(canvas);
   document.body.replaceChildren(canvas, form);
 });
 
@@ -71,6 +70,13 @@ describe("placing a typeset label", () => {
     expect(label?.getAttribute("transform")).toMatch(
       /^translate\([\d.]+,[\d.]+\) scale\([\d.]+\)$/u,
     );
+  });
+
+  it("carries its ink as a presentation attribute, so a serialized canvas keeps its look", async () => {
+    submit(LATEX);
+
+    const [label] = await waitForLabels(1);
+    expect(label?.getAttribute("color")).toBeTruthy();
   });
 
   it("stacks each new label clear of the last instead of piling them up", async () => {
