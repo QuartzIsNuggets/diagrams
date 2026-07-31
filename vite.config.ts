@@ -37,6 +37,9 @@ function quietFontSourceMaps(): Plugin {
 export default defineConfig({
   plugins: [quietFontSourceMaps()],
   build: { target: "es2022", sourcemap: true },
+  // The app window is pointed at a fixed `devUrl`, so Vite quietly moving to
+  // the next free port would leave it showing nothing at all. Fail loudly.
+  server: { strictPort: true },
   optimizeDeps: {
     // MathJax must resolve to ONE module graph. Its font loads glyph ranges by
     // calling `dynamicSetup` on the font class, and dev pre-bundling would put

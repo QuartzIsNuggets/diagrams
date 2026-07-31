@@ -6,12 +6,18 @@ pre-commit:
   parallel: true
   commands:
     format:
-      glob: "*.{ts,js,json,css,md,html}"
+      glob: "*.{ts,js,json,json5,css,md,html}"
       run: pnpm prettier --write {staged_files}
       stage_fixed: true
     lint:
       glob: "*.{ts,js}"
       run: pnpm oxlint {staged_files}
+    # Rust gets no staged-file treatment: rustfmt is driven by the crate, and
+    # the app shell is one small one.
+    rustfmt:
+      glob: "*.rs"
+      run: cargo fmt --manifest-path src-tauri/Cargo.toml
+      stage_fixed: true
     typecheck:
       run: pnpm typecheck
     # Every file needs an SPDX header (see agents-working-files/AGENTS.md).

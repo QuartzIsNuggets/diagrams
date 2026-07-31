@@ -6,3 +6,8 @@ node_modules
 dist
 *.local
 coverage
+src-tauri/target
+
+# Written at compile time: tauri-build's schemas, and the window icon
+# `src-tauri/build.rs` generates — see the note there.
+src-tauri/gen

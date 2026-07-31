@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: 2026 Alexis Ronez <alexis.ronez@mailfence.com>
+#
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "diagrams"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.97.1"
+publish = false
+
+# `config-json5` on both crates, because both parse the config: `tauri-build`
+# from `build.rs` at compile time, `tauri` at runtime. Without it neither finds
+# `tauri.conf.json5` and the build fails looking for a `.json` that is not there.
+[build-dependencies]
+tauri-build = { version = "2", features = ["config-json5"] }
+# For the blank window icon `build.rs` generates; see the note there. Already in
+# the graph via `tauri`, so this costs no extra crate.
+png = "0.18"
+
+[dependencies]
+tauri = { version = "2", features = ["config-json5"] }

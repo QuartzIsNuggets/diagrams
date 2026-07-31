@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: 2026 Alexis Ronez <alexis.ronez@mailfence.com>
+#
+# SPDX-License-Identifier: MIT
+
+# TOML rather than JSON, for the same reason `tauri.conf.json5` is JSON5.
+
+identifier = "default"
+description = "What the frontend may ask the app to do."
+windows = ["main"]
+
+# `core:default` only — the app surface is granted nothing the web surface does
+# not already have. The dialog and filesystem grants arrive with the native
+# writer, in ticket 03.
+permissions = ["core:default"]

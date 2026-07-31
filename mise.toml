@@ -6,3 +6,7 @@
 [tools]
 node = "24.18.0"
 pnpm = "10.34.5"
+# Delegated to the rustup already on the machine — mise sets RUSTUP_TOOLCHAIN
+# rather than installing a second Rust, so this file still states the whole
+# toolchain without owning two copies of it.
+rust = "1.97.1"

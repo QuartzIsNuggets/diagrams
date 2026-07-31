@@ -1,0 +1,39 @@
+// SPDX-FileCopyrightText: 2026 Alexis Ronez <alexis.ronez@mailfence.com>
+//
+// SPDX-License-Identifier: MIT
+
+{
+  $schema: "../node_modules/@tauri-apps/cli/config.schema.json",
+
+  // Placeholders, deliberately: nothing is stored under an app-data directory
+  // yet, so the identifier costs nothing to change later. No `version`: Tauri
+  // takes it from `Cargo.toml`, and two places to bump is one too many.
+  productName: "diagrams",
+  identifier: "local.diagrams",
+
+  build: {
+    // `pnpm dev` -> `tauri dev` -> `pnpm dev:web` -> `vite`. No recursion: the
+    // web loop keeps its own script and Vite still serves the frontend, so UI
+    // iteration is unchanged and Rust only recompiles when Rust changes.
+    beforeDevCommand: "pnpm dev:web",
+    devUrl: "http://localhost:5173",
+    beforeBuildCommand: "pnpm build",
+    frontendDist: "../dist",
+  },
+
+  app: {
+    // The label is spelled out rather than left to Tauri's default, because
+    // `capabilities/default.toml` names it to say which window it grants.
+    windows: [{ label: "main", title: "diagrams", width: 1280, height: 800 }],
+    // CSP left at Tauri's default: MathJax injects styles, so locking it down
+    // is its own question with its own verification cost.
+    security: { csp: null },
+  },
+
+  bundle: {
+    // Not an icon set — the one blank pixel `build.rs` generates, and for the
+    // reason given there. This list is also what a bundle would ship, so it has
+    // to be replaced before the first one; no bundle target is configured yet.
+    icon: ["gen/window-icon.png"],
+  },
+}
