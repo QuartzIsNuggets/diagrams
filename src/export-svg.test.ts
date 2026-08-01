@@ -10,7 +10,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createCanvas, enablePlopping, SVG_NS } from "./canvas";
-import { createExportButton, serializeCanvas } from "./export-svg";
+import { createExportControls, serializeCanvas } from "./export-svg";
 import { createLabelForm } from "./label-form";
 import type { OutgoingFile } from "./writer";
 import { writeFile } from "./writer";
@@ -24,12 +24,14 @@ vi.mock("./writer", () => ({
 
 const LATEX = "\\Sigma_{(x:A)} P(x)";
 
-function noop(): void {}
+/** What the filesystem says when it will not take the file. */
+const REFUSAL = "Permission denied (os error 13)";
 
 const CANVAS_WIDTH = 800;
 const CANVAS_HEIGHT = 600;
 
 let canvas: SVGSVGElement;
+let controls: HTMLDivElement;
 let button: HTMLButtonElement;
 
 /**
@@ -73,6 +75,20 @@ function exportOnce(): OutgoingFile {
   return file;
 }
 
+/** What the affordance is telling the user, if anything. */
+function reported(): string {
+  return controls.querySelector(".export-error")?.textContent ?? "";
+}
+
+/** Press Export, have the write refused, and wait for the affordance to say so. */
+async function refuseOnce(): Promise<void> {
+  vi.mocked(writeFile).mockRejectedValueOnce(new Error(REFUSAL));
+
+  button.click();
+
+  await vi.waitFor(() => expect(reported()).not.toBe(""));
+}
+
 /** The exported document, reparsed from its own bytes the way a viewer would. */
 function reopenExport(): SVGSVGElement {
   const parsed = new DOMParser().parseFromString(serializeCanvas(canvas), "image/svg+xml");
@@ -87,8 +103,9 @@ function pathDataOf(root: ParentNode): (string | null)[] {
 beforeEach(() => {
   canvas = createCanvas();
   enablePlopping(canvas);
-  button = createExportButton(canvas);
-  document.body.replaceChildren(canvas, button);
+  controls = createExportControls(canvas);
+  button = controls.querySelector("button")!;
+  document.body.replaceChildren(canvas, controls);
   sizeCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
 
   vi.mocked(writeFile).mockClear();
@@ -104,10 +121,26 @@ describe("the export affordance", () => {
     expect(button.type).toBe("button");
   });
 
-  it("carries the class that puts it on screen, so it is there to be pressed", () => {
-    // jsdom applies no stylesheet, so the class is as far as this can go: where
-    // `.export-button` actually lands is `style.css`'s to answer.
+  it("carries the classes that put it on screen, so it is there to be pressed", () => {
+    // jsdom applies no stylesheet, so the classes are as far as this can go:
+    // where they actually land is `style.css`'s to answer.
+    expect(controls.classList.contains("export-controls")).toBe(true);
     expect(button.classList.contains("export-button")).toBe(true);
+  });
+
+  it("holds the place a refusal will go before there is one to report", () => {
+    const region = controls.querySelector(".export-error");
+
+    expect(region?.getAttribute("role")).toBe("alert");
+    expect(region?.textContent).toBe("");
+  });
+
+  it("keeps that place above the button, which must not move under the cursor", () => {
+    // jsdom lays nothing out, so the order is as far as this can go: the
+    // affordance is anchored to the bottom of the viewport, so a message before
+    // the button grows the column upward and leaves the button where it was.
+    expect(controls.firstElementChild?.classList.contains("export-error")).toBe(true);
+    expect(controls.lastElementChild).toBe(button);
   });
 });
 
@@ -125,25 +158,44 @@ describe("pressing Export", () => {
 
     expect(exportOnce().contents).toBe(serializeCanvas(canvas));
   });
+});
 
-  it("does not drop a write that failed — the app's can, on the filesystem", async () => {
-    // Silenced while it is being watched: the failure below is deliberate, and
-    // vitest would otherwise print it as if something had gone wrong. Restored
-    // in a `finally`, or a timed-out wait would leave every later test deaf.
-    const reported = vi.spyOn(console, "error").mockImplementation(noop);
-    try {
-      const failure = new Error("read-only file system");
-      vi.mocked(writeFile).mockRejectedValueOnce(failure);
+// A refused write is the one thing the app surface can have and the web surface
+// cannot, and the app window has no console to report it to instead.
+describe("a write the filesystem refuses", () => {
+  it("is reported on screen, naming what failed and what the filesystem said", async () => {
+    await refuseOnce();
 
-      button.click();
+    // Asserted whole, wording and all, because reading it is the point: what
+    // the filesystem said, under what it refused to do, and no `Error:` from a
+    // stringified throwable in front of either.
+    expect(reported()).toBe(`The export could not be written: ${REFUSAL}`);
+  });
 
-      // A log is as far as this goes; `export-svg.ts` says why.
-      await vi.waitFor(() => {
-        expect(reported).toHaveBeenCalledWith(expect.any(String), failure);
-      });
-    } finally {
-      reported.mockRestore();
-    }
+  it("is reported when it arrives as a bare string, which is how the app's plugins reject", async () => {
+    const refusal = "forbidden path: /etc/diagram.svg";
+    vi.mocked(writeFile).mockRejectedValueOnce(refusal);
+
+    button.click();
+
+    await vi.waitFor(() => expect(reported()).toContain(refusal));
+  });
+});
+
+// The message describes the last attempt, so anything the last attempt was
+// other than a failure empties it — the rule `.label-error` follows.
+describe("a refusal already on screen", () => {
+  it.each([
+    ["a completed write", { outcome: "written", path: "/home/somebody/diagram.svg" }],
+    ["a hand-off", { outcome: "handed-off" }],
+    ["a cancelled dialog", { outcome: "cancelled" }],
+  ] as const)("is cleared by %s, which did not fail", async (_outcome, result) => {
+    await refuseOnce();
+    vi.mocked(writeFile).mockResolvedValueOnce(result);
+
+    button.click();
+
+    await vi.waitFor(() => expect(reported()).toBe(""));
   });
 });
 

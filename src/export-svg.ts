@@ -43,41 +43,74 @@ export function serializeCanvas(canvas: SVGSVGElement): string {
 }
 
 /**
- * The button that exports `canvas`, wired and ready to append.
+ * The export affordance — the button that exports `canvas`, and the region that
+ * reports a write the filesystem refused — wired and ready to append.
  *
  * It comes back already listening rather than as an inert element a caller has
  * to remember to enable: the button exists for this one action, so there is no
  * useful moment between the two and nothing for a caller to get in the wrong
  * order. Where it goes on the page is still theirs to decide.
  */
-export function createExportButton(canvas: SVGSVGElement): HTMLButtonElement {
+export function createExportControls(canvas: SVGSVGElement): HTMLDivElement {
+  const controls = document.createElement("div");
+  controls.classList.add("export-controls");
+
+  // Built on both surfaces, though only the app can fill it: a hand-off cannot
+  // fail. Skipping it in a browser tab would mean reading the surface here, and
+  // `writer.ts` is where that read is kept — bought, on the web, for an empty
+  // `<p>`.
+  const error = document.createElement("p");
+  error.classList.add("export-error");
+  error.setAttribute("role", "alert");
+
   const button = document.createElement("button");
   // Explicitly not a submit button: it sits outside the LaTeX form, and the
   // default type would make it one wherever it is later moved.
   button.type = "button";
   button.classList.add("export-button");
   button.textContent = "Export SVG";
-  enableExporting(canvas, button);
-  return button;
+
+  // The message goes before the button, not after it: the affordance is
+  // anchored to the bottom of the viewport, so it grows upward and the button
+  // stays under the cursor that just pressed it.
+  controls.append(error, button);
+  enableExporting(canvas, button, error);
+  return controls;
 }
 
 /**
- * Make pressing `button` emit `canvas` as a standalone `.svg` file.
+ * Make pressing `button` emit `canvas` as a standalone `.svg` file, and report
+ * into `error` when the filesystem will not take it.
  *
  * Where those bytes end up is `writeFile`'s business and differs by surface, so
  * a completed write is dropped rather than reported: an export is one-way, and
- * there is nothing here to remember a path for. A *failed* one — which only the
- * app surface can have, and only from the filesystem — is caught but has
- * nowhere to go: this affordance is one button with no error region of its own.
+ * there is nothing here to remember a path for. A refusal is not dropped: it
+ * arrives as a rejection rather than as an outcome, which is easy to swallow
+ * and which no console in the app window is there to receive.
+ *
+ * A message stands for the *last* attempt, so every outcome that is not a
+ * refusal empties it — including a cancelled dialog, which failed at nothing.
  */
-function enableExporting(canvas: SVGSVGElement, button: HTMLButtonElement): void {
+function enableExporting(
+  canvas: SVGSVGElement,
+  button: HTMLButtonElement,
+  error: HTMLParagraphElement,
+): void {
   button.addEventListener("click", () => {
     writeFile({
       contents: serializeCanvas(canvas),
       filename: EXPORT_FILENAME,
       mediaType: SVG_MEDIA_TYPE,
-    }).catch((failure: unknown) => {
-      console.error("the export could not be written", failure);
-    });
+    })
+      .then(() => {
+        error.textContent = "";
+      })
+      // What the filesystem said, after what it refused to do: a refusal
+      // describes neither on its own, and it comes from a plugin boundary
+      // rather than from anything here.
+      .catch((failure: unknown) => {
+        const said = failure instanceof Error ? failure.message : String(failure);
+        error.textContent = `The export could not be written: ${said}`;
+      });
   });
 }

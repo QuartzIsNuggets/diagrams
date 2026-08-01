@@ -31,7 +31,7 @@ body {
 /* The controls float over the canvas rather than taking room from it: the LaTeX
    bar in one bottom corner, the Export button in the other. */
 .label-form,
-.export-button {
+.export-controls {
   position: fixed;
   bottom: 16px;
   font:
@@ -46,14 +46,22 @@ body {
   gap: 8px;
 }
 
-.export-button {
+/* A column pinned by its bottom-right corner: a message appearing above the
+   button grows the column upward, and the button keeps that corner rather than
+   moving out from under the cursor that just pressed it. */
+.export-controls {
   right: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
 }
 
-/* Form controls do not inherit type by default; the bar's children have to be
-   told to take the bar's. The Export button is styled above in its own right. */
+/* Form controls do not inherit type by default; the children of both have to be
+   told to take theirs. */
 .label-input,
-.label-form button {
+.label-form button,
+.export-controls button {
   font: inherit;
 }
 
@@ -72,8 +80,16 @@ body {
   background: #f4f4f4;
 }
 
-/* Empty until a label is refused, so it takes no room the rest of the time. */
-.label-error {
+/* Empty until something is refused — a label, a write — so they take no room
+   the rest of the time. */
+.label-error,
+.export-error {
   margin: 0;
   color: #b00020;
+}
+
+/* A filesystem refusal names a path and can run long. Wrapping it keeps the
+   column from spreading across the canvas into the LaTeX bar. */
+.export-error {
+  max-width: 40ch;
 }

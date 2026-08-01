@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 import { createCanvas, enablePlopping } from "./canvas";
-import { createExportButton } from "./export-svg";
+import { createExportControls } from "./export-svg";
 import { createLabelForm } from "./label-form";
 import { prewarmTypesetting } from "./typesetting";
 
@@ -16,9 +16,9 @@ const canvas = createCanvas();
 enablePlopping(canvas);
 
 const labelForm = createLabelForm(canvas);
-const exportButton = createExportButton(canvas);
+const exportControls = createExportControls(canvas);
 
-app.append(canvas, labelForm, exportButton);
+app.append(canvas, labelForm, exportControls);
 
 // The canvas and the bar are on screen now; fetch the typesetter behind them so
 // it is ready by the time the first label is submitted.
