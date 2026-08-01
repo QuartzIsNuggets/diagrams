@@ -25,7 +25,7 @@ import type { Cancelled, OutgoingFile, Written } from "./writer";
  * surface always knows where the bytes went, so `handed-off` is not an answer
  * it should ever be able to give.
  */
-export async function saveAs(file: OutgoingFile): Promise<Written | Cancelled> {
+export async function write(file: OutgoingFile): Promise<Written | Cancelled> {
   const path = await save({ defaultPath: file.filename, filters: filtersFor(file.filename) });
   if (path === null) {
     return { outcome: "cancelled" };

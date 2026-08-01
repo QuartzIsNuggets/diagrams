@@ -47,7 +47,9 @@ export type WriteResult = Written | HandedOff | Cancelled;
  * The one door for getting bytes out of the editor, and the whole of what it
  * promises. Callers differ in what they hand over and what they do with the
  * result — an export forgets it, a save will remember the path — and none of
- * that is this seam's business.
+ * that is this seam's business. Nor is *obtaining* the choice: every write asks
+ * today only because export has no path to hand over, and a caller that has one
+ * passes it through this door rather than around it.
  *
  * A promise from the start, because on the app surface it waits on a dialog the
  * user has to answer. The web arm has nothing to wait for, and is called
@@ -60,7 +62,7 @@ export function writeFile(file: OutgoingFile): Promise<WriteResult> {
     // `@tauri-apps/*`, and it is loaded like this so that code lands in a chunk
     // the web build never fetches. The wait costs the app nothing: what follows
     // it is a dialog the user has to answer anyway.
-    return import("./app-writer").then(({ saveAs }) => saveAs(file));
+    return import("./app-writer").then(({ write }) => write(file));
   }
   return Promise.resolve(download(file));
 }
