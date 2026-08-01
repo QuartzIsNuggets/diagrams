@@ -19,7 +19,9 @@
   "dependencies": {
     "@mathjax/mathjax-newcm-font": "^4",
     "@mathjax/src": "^4",
-    "@tauri-apps/api": "^2"
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2",
+    "@tauri-apps/plugin-fs": "^2"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",

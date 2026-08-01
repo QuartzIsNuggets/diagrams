@@ -7,16 +7,29 @@
 // SVG — what the writer promises is to put *these* bytes under *that* name, and
 // nothing about the diagram they came from.
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { SaveDialogOptions } from "@tauri-apps/plugin-dialog";
+import { save } from "@tauri-apps/plugin-dialog";
+import { writeTextFile } from "@tauri-apps/plugin-fs";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { OutgoingFile } from "./writer";
 import { writeFile } from "./writer";
+
+// The app's two halves, stood in for. What is checked here is the wiring — that
+// the dialog is asked, and that its answer decides what happens next. Whether
+// WebKitGTK puts a GTK window on screen is outside any jsdom run, and is
+// recorded by hand in this feature's `verification/` instead.
+vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn() }));
+vi.mock("@tauri-apps/plugin-fs", () => ({ writeTextFile: vi.fn() }));
 
 const FILE: OutgoingFile = {
   contents: "whatever the caller handed over\n",
   filename: "chosen-name.txt",
   mediaType: "text/plain;charset=utf-8",
 };
+
+/** Where the user pointed the save dialog. */
+const CHOSEN_PATH = "/home/somebody/notes/chosen-name.txt";
 
 /** What the browser was asked to save: the file's name, its bytes, its URL. */
 interface Download {
@@ -59,10 +72,21 @@ HTMLAnchorElement.prototype.click = function (this: HTMLAnchorElement): void {
   }
 };
 
+/** What the save dialog was opened with. */
+function dialogOptions(): SaveDialogOptions {
+  const options = vi.mocked(save).mock.lastCall?.[0];
+  if (!options) {
+    throw new Error("the writer opened no save dialog");
+  }
+  return options;
+}
+
 beforeEach(() => {
   downloads = [];
   revoked = [];
   blobs.clear();
+  vi.mocked(save).mockReset();
+  vi.mocked(writeTextFile).mockReset();
 });
 
 describe("writing a file on the web surface", () => {
@@ -107,5 +131,90 @@ describe("writing a file on the web surface", () => {
     void writeFile(FILE);
 
     expect(downloads).toHaveLength(1);
+  });
+
+  it("opens no save dialog, there being no app under the tab to answer one", async () => {
+    await writeFile(FILE);
+
+    expect(save).not.toHaveBeenCalled();
+  });
+});
+
+// Stand up what Tauri stamps on the webview's global, around each test in the
+// calling block, and take it down after — so the web tests above meet a tab and
+// not a half-app. Why the writer reads it at all is recorded in `writer.ts`.
+function withTheApp(): void {
+  beforeEach(() => {
+    Reflect.set(globalThis, "isTauri", true);
+  });
+
+  afterEach(() => {
+    Reflect.deleteProperty(globalThis, "isTauri");
+  });
+}
+
+describe("writing a file on the app surface", () => {
+  withTheApp();
+
+  beforeEach(() => {
+    vi.mocked(save).mockResolvedValue(CHOSEN_PATH);
+  });
+
+  it("asks the user where the file goes, offering the name it was given", async () => {
+    await writeFile(FILE);
+
+    expect(dialogOptions().defaultPath).toBe(FILE.filename);
+  });
+
+  it("offers the file's own kind, as the bare extension Tauri's dialogs take", async () => {
+    await writeFile(FILE);
+
+    expect(dialogOptions().filters).toEqual([{ name: "TXT", extensions: ["txt"] }]);
+  });
+
+  it("writes exactly the bytes it was given, at the path the user chose", async () => {
+    await writeFile(FILE);
+
+    expect(writeTextFile).toHaveBeenCalledWith(CHOSEN_PATH, FILE.contents);
+  });
+
+  it("reports the path, which is the one thing only this surface can know", async () => {
+    await expect(writeFile(FILE)).resolves.toEqual({ outcome: "written", path: CHOSEN_PATH });
+  });
+
+  it("never falls back to a download, which the app has no shelf to show", async () => {
+    await writeFile(FILE);
+
+    expect(downloads).toEqual([]);
+  });
+
+  it("reports no write when the filesystem refused one", async () => {
+    // The arm has to wait for the write, not just start it: a `writeTextFile`
+    // left unawaited would have this resolve `written` for a file that never
+    // landed, and the caller would be told the opposite of what happened.
+    const refusal = new Error("read-only file system");
+    vi.mocked(writeTextFile).mockRejectedValue(refusal);
+
+    await expect(writeFile(FILE)).rejects.toBe(refusal);
+  });
+});
+
+describe("dismissing the app's save dialog", () => {
+  withTheApp();
+
+  beforeEach(() => {
+    // `null` is how the dialog reports a dismissal, and the reason the writer
+    // has a `cancelled` arm at all.
+    vi.mocked(save).mockResolvedValue(null);
+  });
+
+  it("writes nothing", async () => {
+    await writeFile(FILE);
+
+    expect(writeTextFile).not.toHaveBeenCalled();
+  });
+
+  it("reports cancellation, so nothing downstream announces a file", async () => {
+    await expect(writeFile(FILE)).resolves.toEqual({ outcome: "cancelled" });
   });
 });

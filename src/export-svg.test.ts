@@ -24,6 +24,8 @@ vi.mock("./writer", () => ({
 
 const LATEX = "\\Sigma_{(x:A)} P(x)";
 
+function noop(): void {}
+
 const CANVAS_WIDTH = 800;
 const CANVAS_HEIGHT = 600;
 
@@ -122,6 +124,26 @@ describe("pressing Export", () => {
     plopDotAt(120, 45);
 
     expect(exportOnce().contents).toBe(serializeCanvas(canvas));
+  });
+
+  it("does not drop a write that failed — the app's can, on the filesystem", async () => {
+    // Silenced while it is being watched: the failure below is deliberate, and
+    // vitest would otherwise print it as if something had gone wrong. Restored
+    // in a `finally`, or a timed-out wait would leave every later test deaf.
+    const reported = vi.spyOn(console, "error").mockImplementation(noop);
+    try {
+      const failure = new Error("read-only file system");
+      vi.mocked(writeFile).mockRejectedValueOnce(failure);
+
+      button.click();
+
+      // A log is as far as this goes; `export-svg.ts` says why.
+      await vi.waitFor(() => {
+        expect(reported).toHaveBeenCalledWith(expect.any(String), failure);
+      });
+    } finally {
+      reported.mockRestore();
+    }
   });
 });
 

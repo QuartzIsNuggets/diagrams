@@ -55,5 +55,31 @@ export type WriteResult = Written | HandedOff | Cancelled;
  * asked for it.
  */
 export function writeFile(file: OutgoingFile): Promise<WriteResult> {
+  if (onTheAppSurface()) {
+    // The app's arm is the only thing in the frontend that imports
+    // `@tauri-apps/*`, and it is loaded like this so that code lands in a chunk
+    // the web build never fetches. The wait costs the app nothing: what follows
+    // it is a dialog the user has to answer anyway.
+    return import("./app-writer").then(({ saveAs }) => saveAs(file));
+  }
   return Promise.resolve(download(file));
+}
+
+/**
+ * Whether the frontend is running in the app rather than in a browser tab.
+ *
+ * Tauri stamps `isTauri` onto the webview's global before the frontend loads,
+ * and `@tauri-apps/api`'s own `isTauri()` is exactly this read. Reading the
+ * global instead of calling that function is what keeps the check synchronous:
+ * importing the module that exports it would put either an `await` in front of
+ * the web arm's `link.click()`, spending the user gesture the download rides,
+ * or `@tauri-apps/*` in the web build's chunk.
+ *
+ * Looked up rather than declared ambient: a `declare var` would let any module
+ * write bare `isTauri`, which is a `ReferenceError` in the tab this very
+ * function exists to detect. The one place that reads it is the one place that
+ * needs to know it may not be there.
+ */
+function onTheAppSurface(): boolean {
+  return Reflect.get(globalThis, "isTauri") === true;
 }

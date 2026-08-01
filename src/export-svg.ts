@@ -65,15 +65,19 @@ export function createExportButton(canvas: SVGSVGElement): HTMLButtonElement {
  * Make pressing `button` emit `canvas` as a standalone `.svg` file.
  *
  * Where those bytes end up is `writeFile`'s business and differs by surface, so
- * what comes back is dropped rather than reported: an export is one-way, and
- * there is nothing here to remember a path for.
+ * a completed write is dropped rather than reported: an export is one-way, and
+ * there is nothing here to remember a path for. A *failed* one — which only the
+ * app surface can have, and only from the filesystem — is caught but has
+ * nowhere to go: this affordance is one button with no error region of its own.
  */
 function enableExporting(canvas: SVGSVGElement, button: HTMLButtonElement): void {
   button.addEventListener("click", () => {
-    void writeFile({
+    writeFile({
       contents: serializeCanvas(canvas),
       filename: EXPORT_FILENAME,
       mediaType: SVG_MEDIA_TYPE,
+    }).catch((failure: unknown) => {
+      console.error("the export could not be written", failure);
     });
   });
 }
