@@ -2,18 +2,13 @@
 //
 // SPDX-License-Identifier: MIT
 
-/** What the downloaded diagram is called. */
+import { writeFile } from "./writer";
+
+/** What the exported diagram is called, until the user says otherwise. */
 const EXPORT_FILENAME = "diagram.svg";
 
-/**
- * How long to hold the blob URL open after the click that consumes it.
- *
- * Revoking in the same task as `link.click()` has raced the download in
- * Firefox; one turn of the event loop is enough for the browser to have taken
- * the blob, and leaves nothing leaked afterwards. What matters is that the
- * revoke is deferred at all, not the number.
- */
-const NEXT_TASK = 0;
+/** What it is, for whoever opens it: a drawing, not text that happens to be XML. */
+const SVG_MEDIA_TYPE = "image/svg+xml;charset=utf-8";
 
 /**
  * Serialize `canvas` into a standalone SVG document.
@@ -48,7 +43,7 @@ export function serializeCanvas(canvas: SVGSVGElement): string {
 }
 
 /**
- * The button that downloads `canvas`, wired and ready to append.
+ * The button that exports `canvas`, wired and ready to append.
  *
  * It comes back already listening rather than as an inert element a caller has
  * to remember to enable: the button exists for this one action, so there is no
@@ -66,28 +61,19 @@ export function createExportButton(canvas: SVGSVGElement): HTMLButtonElement {
   return button;
 }
 
-/** Make pressing `button` download `canvas` as a standalone `.svg` file. */
+/**
+ * Make pressing `button` emit `canvas` as a standalone `.svg` file.
+ *
+ * Where those bytes end up is `writeFile`'s business and differs by surface, so
+ * what comes back is dropped rather than reported: an export is one-way, and
+ * there is nothing here to remember a path for.
+ */
 function enableExporting(canvas: SVGSVGElement, button: HTMLButtonElement): void {
   button.addEventListener("click", () => {
-    download(serializeCanvas(canvas), EXPORT_FILENAME);
+    void writeFile({
+      contents: serializeCanvas(canvas),
+      filename: EXPORT_FILENAME,
+      mediaType: SVG_MEDIA_TYPE,
+    });
   });
-}
-
-/**
- * Hand `source` to the browser as a file named `filename`.
- *
- * A blob rather than a `data:` URL: a diagram of typeset labels is a lot of
- * path data, and data URLs are length-capped by the browser.
- */
-function download(source: string, filename: string): void {
-  const url = URL.createObjectURL(new Blob([source], { type: "image/svg+xml;charset=utf-8" }));
-  // The anchor never joins the document: a synthetic click on a detached one
-  // downloads just the same, and nothing has to be cleaned up after it.
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  link.click();
-  setTimeout(() => {
-    URL.revokeObjectURL(url);
-  }, NEXT_TASK);
 }

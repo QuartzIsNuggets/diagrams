@@ -7,28 +7,28 @@
 // real MathJax pipeline — because an export is only worth anything if what is
 // on screen survives the trip.
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createCanvas, enablePlopping, SVG_NS } from "./canvas";
 import { createExportButton, serializeCanvas } from "./export-svg";
 import { createLabelForm } from "./label-form";
+import type { OutgoingFile } from "./writer";
+import { writeFile } from "./writer";
+
+// The one collaborator stood in for, against the real everything else above:
+// what Export promises ends at the writer's door — the serialized canvas, under
+// a name and a type — and where the bytes go from there is `writer.test.ts`'s.
+vi.mock("./writer", () => ({
+  writeFile: vi.fn(() => Promise.resolve({ outcome: "handed-off" })),
+}));
 
 const LATEX = "\\Sigma_{(x:A)} P(x)";
 
 const CANVAS_WIDTH = 800;
 const CANVAS_HEIGHT = 600;
 
-/** What the browser was asked to save: the file's name and its bytes. */
-interface Download {
-  filename: string;
-  blob: Blob;
-  url: string;
-}
-
 let canvas: SVGSVGElement;
 let button: HTMLButtonElement;
-let downloads: Download[];
-let revoked: string[];
 
 /**
  * Give the canvas a rendered size.
@@ -61,14 +61,14 @@ async function placeLabel(latex: string): Promise<void> {
   });
 }
 
-/** Press Export and read back the file the browser was handed. */
-function exportOnce(): Download {
+/** Press Export and read back the file the writer was handed. */
+function exportOnce(): OutgoingFile {
   button.click();
-  const download = downloads.at(-1);
-  if (!download) {
-    throw new Error("pressing Export handed the browser no file");
+  const file = vi.mocked(writeFile).mock.lastCall?.[0];
+  if (!file) {
+    throw new Error("pressing Export handed the writer no file");
   }
-  return download;
+  return file;
 }
 
 /** The exported document, reparsed from its own bytes the way a viewer would. */
@@ -82,9 +82,6 @@ function pathDataOf(root: ParentNode): (string | null)[] {
   return [...root.querySelectorAll("path")].map((path) => path.getAttribute("d"));
 }
 
-const anchorClick = HTMLAnchorElement.prototype.click;
-const { createObjectURL, revokeObjectURL } = URL;
-
 beforeEach(() => {
   canvas = createCanvas();
   enablePlopping(canvas);
@@ -92,32 +89,7 @@ beforeEach(() => {
   document.body.replaceChildren(canvas, button);
   sizeCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
 
-  // jsdom implements neither object URLs nor downloads, so both ends of the
-  // hand-off are stood in for: the blob is kept so its bytes can be read, and
-  // the anchor is caught instead of navigating.
-  downloads = [];
-  revoked = [];
-  const blobs = new Map<string, Blob>();
-  URL.createObjectURL = (blob: Blob): string => {
-    const url = `blob:test/${String(blobs.size)}`;
-    blobs.set(url, blob);
-    return url;
-  };
-  URL.revokeObjectURL = (url: string): void => {
-    revoked.push(url);
-  };
-  HTMLAnchorElement.prototype.click = function (this: HTMLAnchorElement): void {
-    const blob = blobs.get(this.href);
-    if (blob) {
-      downloads.push({ filename: this.download, blob, url: this.href });
-    }
-  };
-});
-
-afterEach(() => {
-  HTMLAnchorElement.prototype.click = anchorClick;
-  URL.createObjectURL = createObjectURL;
-  URL.revokeObjectURL = revokeObjectURL;
+  vi.mocked(writeFile).mockClear();
 });
 
 describe("the export affordance", () => {
@@ -138,30 +110,18 @@ describe("the export affordance", () => {
 });
 
 describe("pressing Export", () => {
-  it("hands the browser a file to save", () => {
+  it("hands the writer a file to put somewhere, named as an SVG", () => {
     expect(exportOnce().filename).toMatch(/\.svg$/u);
   });
 
-  it("saves it as SVG, so the file opens as a drawing and not as text", () => {
-    expect(exportOnce().blob.type).toMatch(/^image\/svg\+xml\b/u);
+  it("calls it SVG, so the file opens as a drawing and not as text", () => {
+    expect(exportOnce().mediaType).toMatch(/^image\/svg\+xml\b/u);
   });
 
-  it("saves the serialized canvas itself", async () => {
+  it("hands over the serialized canvas itself", () => {
     plopDotAt(120, 45);
 
-    await expect(exportOnce().blob.text()).resolves.toBe(serializeCanvas(canvas));
-  });
-
-  it("releases the blob URL once the browser has taken it", () => {
-    vi.useFakeTimers();
-    try {
-      const { url } = exportOnce();
-      expect(revoked).toEqual([]);
-      vi.runAllTimers();
-      expect(revoked).toEqual([url]);
-    } finally {
-      vi.useRealTimers();
-    }
+    expect(exportOnce().contents).toBe(serializeCanvas(canvas));
   });
 });
 
