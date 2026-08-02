@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: MIT
 
+import { messageOf } from "./failure";
 import { loadFontRange } from "./font-ranges";
 
 /**
@@ -108,28 +109,63 @@ async function bootMathJax(): Promise<(latex: string) => Promise<Element>> {
 }
 
 /**
- * Typeset `latex` into a `<g>` of glyph `<path>`s — real geometry, never a
+ * A typeset run: `<g>` of glyph `<path>`s, and how much room it takes.
+ *
+ * Every number is in the engine's own font units ({@link UNITS_PER_EM}),
+ * measured from the left baseline point the geometry has its origin at:
+ * `width` runs right from it, `ascent` up and `depth` down. A caller needs them
+ * to put the run anywhere but the origin — to centre it, or to sit its top edge
+ * under a wall — and they are not readable off the geometry without a laid-out
+ * page to measure in.
+ */
+export interface GlyphRun {
+  readonly glyphs: Element;
+  readonly width: number;
+  readonly ascent: number;
+  readonly depth: number;
+}
+
+/**
+ * Typeset `latex` into a run of glyph `<path>`s — real geometry, never a
  * `<foreignObject>`.
  *
- * What comes back is bare geometry and nothing else: no class, no colour, no
- * placement. It is in the engine's own font units ({@link UNITS_PER_EM}) with
- * its origin at the left baseline point, and it carries a transform of its own
- * — so a caller placing it needs to wrap it rather than transform it directly.
- * Dressing a run and putting it somewhere is the caller's business; this module
- * only knows how to draw one.
+ * What comes back is bare geometry and its extent: no class, no colour, no
+ * placement. The geometry carries a transform of its own, so a caller placing
+ * it needs to wrap it rather than transform it directly. Dressing a run and
+ * putting it somewhere is the caller's business; this module only knows how to
+ * draw one.
  *
  * Awaiting this awaits the engine's own async start-up, so the first call is as
  * reliable as the tenth.
  */
-export async function typesetLatex(latex: string): Promise<Element> {
+export async function typesetLatex(latex: string): Promise<GlyphRun> {
   const typeset = await mathjaxPipeline();
   const container = await typeset(latex).catch(explainMissingRange);
   const glyphs = glyphsOf(container);
+  const extent = extentOf(container);
 
   // Cut free of the packaging it was found in, so what the caller holds is the
   // geometry alone rather than a node still rooted in an <mjx-container>.
   glyphs.remove();
-  return glyphs;
+  return { glyphs, ...extent };
+}
+
+/**
+ * Read the run's extent off the packaging, before that is thrown away.
+ *
+ * MathJax states it as the `viewBox` of the `<svg>` it wraps the geometry in —
+ * the only place it is written down, the glyphs themselves being paths with no
+ * bounds attached. It is `minX minY width height` in font units, with the
+ * baseline at y = 0 and y pointing down, so the ascent is where the box starts
+ * above the baseline and the depth is what is left below.
+ */
+function extentOf(container: Element): Omit<GlyphRun, "glyphs"> {
+  const [, minY = 0, width = 0, height = 0] = (
+    container.firstElementChild?.getAttribute("viewBox") ?? ""
+  )
+    .split(" ")
+    .map(Number);
+  return { width, ascent: -minY, depth: height + minY };
 }
 
 /**
@@ -184,7 +220,7 @@ function glyphsOf(container: Element): Element {
  * instead, which {@link glyphsOf} catches; both roads lead to a refusal.)
  */
 function explainMissingRange(failure: unknown): never {
-  const message = failure instanceof Error ? failure.message : String(failure);
+  const message = messageOf(failure);
   const range = /dynamic file '([^']+)' failed to load/u.exec(message)?.[1];
   if (range === undefined) {
     throw failure;

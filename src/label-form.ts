@@ -3,7 +3,10 @@
 // SPDX-License-Identifier: MIT
 
 import { SVG_NS } from "./canvas";
+import type { Source } from "./diagram";
+import { messageOf } from "./failure";
 import { INK } from "./palette";
+import type { PagePoint } from "./render-svg";
 import { typesetLatex, UNITS_PER_EM } from "./typesetting";
 
 /** Type size of a placed label, in canvas units. */
@@ -15,13 +18,28 @@ const LABEL_ORIGIN_Y = 60;
 const LABEL_LINE_HEIGHT = 56;
 
 /**
+ * The one place LaTeX is typed, and what it is currently being asked.
+ *
+ * There is one input, so there is at most one outstanding question, and
+ * `answer` is that question's one reply. Held beside the form rather than in it
+ * so the bar stays an ordinary element its holder can put anywhere.
+ */
+interface Bar {
+  readonly input: HTMLInputElement;
+  answer?: ((source: Source) => void) | undefined;
+}
+
+const bars = new WeakMap<HTMLFormElement, Bar>();
+
+/**
  * The LaTeX bar — a text input and the button that typesets what is in it —
  * wired to place onto `canvas` and ready to append.
  *
  * It comes back already listening rather than as an inert element a caller has
  * to remember to enable: a bar that typesets nowhere is not a useful thing to
  * hold, so there is no moment between the two worth exposing. Where it goes on
- * the page is still theirs to decide.
+ * the page is still theirs to decide — and {@link askForSource} moves it, there
+ * being exactly one place LaTeX is typed and it going to whatever it names.
  */
 export function createLabelForm(canvas: SVGSVGElement): HTMLFormElement {
   const form = document.createElement("form");
@@ -45,15 +63,63 @@ export function createLabelForm(canvas: SVGSVGElement): HTMLFormElement {
   error.setAttribute("role", "alert");
 
   form.append(input, button, error);
+  bars.set(form, { input });
   enableLabelPlacing(canvas, form);
   return form;
 }
 
 /**
- * Make submitting `form` typeset its LaTeX onto `canvas`.
+ * Ask for a source at a point on the page: the bar leaves its corner and sits
+ * there until the question is answered.
  *
- * Labels accumulate the way term-dots do, each one dropping a line below the
- * last so successive submits stay legible rather than piling up on one spot.
+ * It is the same input, unpinned — not a modal, which would cover the mark it
+ * asks about, and not a second field beside the standing bar, which would be two
+ * error surfaces answering one question. What is already typed is left in place
+ * and selected, so a source a gesture refused can be corrected rather than
+ * retyped.
+ *
+ * Resolves with what was typed, and with the empty source where the question
+ * was given up on: Escape, and equally a submit with nothing in it, there being
+ * nothing to name.
+ */
+export function askForSource(form: HTMLFormElement, at: PagePoint): Promise<Source> {
+  const bar = bars.get(form);
+  if (!bar) {
+    return Promise.resolve("");
+  }
+  form.classList.add("asking");
+  form.style.left = `${String(at.left)}px`;
+  form.style.top = `${String(at.top)}px`;
+  bar.input.focus();
+  bar.input.select();
+
+  return new Promise((resolve) => {
+    bar.answer = (source) => {
+      bar.answer = undefined;
+      form.classList.remove("asking");
+      form.style.removeProperty("left");
+      form.style.removeProperty("top");
+      resolve(source);
+    };
+  });
+}
+
+/** Empty the input: what it held has landed, and the next source can be typed. */
+export function clearSource(form: HTMLFormElement): void {
+  const bar = bars.get(form);
+  if (bar) {
+    bar.input.value = "";
+  }
+}
+
+/**
+ * Make submitting `form` typeset its LaTeX onto `canvas`, and Escape give up on
+ * whatever it is being asked.
+ *
+ * A submit goes to the question the bar is being asked, if it is being asked
+ * one, and only otherwise places a label of its own. Labels accumulate the way
+ * term-dots do, each one dropping a line below the last so successive submits
+ * stay legible rather than piling up on one spot.
  */
 function enableLabelPlacing(canvas: SVGSVGElement, form: HTMLFormElement): void {
   // Placements run one at a time: each reads its row off the canvas, so two in
@@ -62,9 +128,16 @@ function enableLabelPlacing(canvas: SVGSVGElement, form: HTMLFormElement): void 
 
   form.addEventListener("submit", (event: SubmitEvent) => {
     event.preventDefault();
-    const input = form.querySelector("input");
-    const latex = input?.value.trim();
-    if (!input || !latex) {
+    const bar = bars.get(form);
+    if (!bar) {
+      return;
+    }
+    const latex = bar.input.value.trim();
+    if (bar.answer) {
+      bar.answer(latex);
+      return;
+    }
+    if (!latex) {
       return;
     }
     pending = pending
@@ -76,15 +149,21 @@ function enableLabelPlacing(canvas: SVGSVGElement, form: HTMLFormElement): void 
         setError(form, "");
         // Only clear the input once the label is up, and only if the user has
         // not moved on to typing the next one.
-        if (input.value.trim() === latex) {
-          input.value = "";
+        if (bar.input.value.trim() === latex) {
+          bar.input.value = "";
         }
       })
       // A rejection must not poison the chain, or one bad label would silence
       // every submit after it. The source stays in the input to be corrected.
       .catch((failure: unknown) => {
-        setError(form, failure instanceof Error ? failure.message : String(failure));
+        setError(form, messageOf(failure));
       });
+  });
+
+  form.addEventListener("keydown", (event: KeyboardEvent) => {
+    if (event.key === "Escape") {
+      bars.get(form)?.answer?.("");
+    }
   });
 }
 
@@ -105,7 +184,7 @@ function setError(form: HTMLFormElement, message: string): void {
  * export has to stand alone.
  */
 async function placeLabel(canvas: SVGSVGElement, latex: string): Promise<void> {
-  const glyphs = await typesetLatex(latex);
+  const { glyphs } = await typesetLatex(latex);
 
   const label = document.createElementNS(SVG_NS, "g");
   label.classList.add("math-label");

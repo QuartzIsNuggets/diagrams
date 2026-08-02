@@ -16,7 +16,8 @@ body {
   height: 100%;
 }
 
-#app {
+#app,
+.editor {
   height: 100%;
 }
 
@@ -26,6 +27,15 @@ body {
   width: 100%;
   height: 100%;
   background: #ffffff;
+}
+
+/* The rectangle a box is being drawn in: chrome, so it is styled from here
+   rather than carrying its own presentation. It never reaches an export. */
+.provisional-box {
+  fill: none;
+  stroke: #7a7a7a;
+  stroke-width: 1;
+  stroke-dasharray: 6 4;
 }
 
 /* The controls float over the canvas rather than taking room from it: the LaTeX
@@ -44,6 +54,15 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* The one input, unpinned: while a gesture is naming something it leaves its
+   corner for the label slot of the mark it names, which the shell sets as an
+   inline `left`/`top`. Centred on that point, and clear of the corner it came
+   from. */
+.label-form.asking {
+  bottom: auto;
+  transform: translate(-50%, -100%);
 }
 
 /* A column pinned by its bottom-right corner: a message appearing above the
@@ -80,9 +99,10 @@ body {
   background: #f4f4f4;
 }
 
-/* Empty until something is refused — a label, a write — so they take no room
-   the rest of the time. */
+/* Empty until something is refused — a label, a gesture, a write — so they take
+   no room the rest of the time. */
 .label-error,
+.canvas-error,
 .export-error {
   margin: 0;
   color: #b00020;
@@ -92,4 +112,18 @@ body {
    column from spreading across the canvas into the LaTeX bar. */
 .export-error {
   max-width: 40ch;
+}
+
+/* The canvas's own region, for a gesture that put nothing on it. At the top,
+   clear of the controls along the bottom and of the rectangle that just went. */
+.canvas-error {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 60ch;
+  font:
+    14px system-ui,
+    sans-serif;
+  text-align: center;
 }

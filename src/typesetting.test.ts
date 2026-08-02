@@ -19,7 +19,7 @@ describe("prewarming the typesetter", () => {
   it("leaves MathJax ready, so a label typesets off the warmed engine", async () => {
     await prewarmTypesetting();
 
-    const glyphs = await typesetLatex(LATEX);
+    const { glyphs } = await typesetLatex(LATEX);
     expect(glyphs.querySelectorAll("path").length).toBeGreaterThan(0);
   });
 
@@ -82,7 +82,7 @@ describe("when the prewarm runs", () => {
 
 describe("typesetting LaTeX", () => {
   it("returns an SVG <g> whose glyphs are <path> geometry", async () => {
-    const glyphs = await typesetLatex(LATEX);
+    const { glyphs } = await typesetLatex(LATEX);
 
     expect(glyphs.tagName).toBe("g");
     expect(glyphs.namespaceURI).toBe("http://www.w3.org/2000/svg");
@@ -90,7 +90,7 @@ describe("typesetting LaTeX", () => {
   });
 
   it("leaks no HTML or MathML into the canvas — every node is SVG", async () => {
-    const glyphs = await typesetLatex(LATEX);
+    const { glyphs } = await typesetLatex(LATEX);
 
     const foreign = descendantsOf(glyphs).filter(
       (node) => node.namespaceURI !== "http://www.w3.org/2000/svg",
@@ -101,7 +101,7 @@ describe("typesetting LaTeX", () => {
   });
 
   it("draws every mark as geometry — no <text> falling back on a system font", async () => {
-    const glyphs = await typesetLatex(LATEX);
+    const { glyphs } = await typesetLatex(LATEX);
 
     // MathJax emits <text> only when it has no outline for a glyph, which would
     // leave the export depending on whatever font the viewer happens to have.
@@ -112,16 +112,36 @@ describe("typesetting LaTeX", () => {
   });
 
   it("inlines every glyph, with no <defs>/<use> font cache to leave behind", async () => {
-    const glyphs = await typesetLatex(LATEX);
+    const { glyphs } = await typesetLatex(LATEX);
 
     expect(glyphs.querySelector("defs")).toBeNull();
     expect(glyphs.querySelector("use")).toBeNull();
   });
 
   it("hands back geometry alone, cut free of MathJax's own packaging", async () => {
-    const glyphs = await typesetLatex(LATEX);
+    const { glyphs } = await typesetLatex(LATEX);
 
     expect(glyphs.parentElement).toBeNull();
+  });
+});
+
+describe("measuring a typeset run", () => {
+  it("says how much room it takes, which the geometry alone no longer does", async () => {
+    const run = await typesetLatex(LATEX);
+
+    // `\Sigma_{(x:A)} P(x)` is wider than it is tall and descends below the
+    // baseline, its subscript being the only thing down there.
+    expect(run.width).toBeGreaterThan(run.ascent + run.depth);
+    expect(run.ascent).toBeGreaterThan(0);
+    expect(run.depth).toBeGreaterThan(0);
+    expect(run.depth).toBeLessThan(run.ascent);
+  });
+
+  it("measures a run that sits wholly on the baseline as having no depth", async () => {
+    const run = await typesetLatex("A");
+
+    expect(run.depth).toBe(0);
+    expect(run.ascent).toBeGreaterThan(0);
   });
 });
 
@@ -155,7 +175,7 @@ describe("glyph ranges the font keeps out of its main entry", () => {
 
   it("draws them as outlines rather than falling back to system text", async () => {
     for (const latex of NEEDS_A_RANGE) {
-      const glyphs = await typesetLatex(latex);
+      const { glyphs } = await typesetLatex(latex);
 
       expect(glyphs.querySelector("text"), latex).toBeNull();
       expect(glyphs.querySelectorAll("path").length, latex).toBeGreaterThan(0);
@@ -203,7 +223,7 @@ describe("a boot that fails", () => {
     await expect(isolated.typesetLatex(LATEX)).rejects.toThrow("engine failed to start");
 
     bootFails = false;
-    const glyphs = await isolated.typesetLatex(LATEX);
+    const { glyphs } = await isolated.typesetLatex(LATEX);
     expect(glyphs.querySelectorAll("path").length).toBeGreaterThan(0);
 
     vi.doUnmock(MODULE);
