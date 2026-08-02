@@ -253,6 +253,13 @@ export function enableDragging(
     if (event.button !== PRIMARY_BUTTON) {
       return;
     }
+    // Before asking what the press means, and whatever the answer: a press on
+    // the canvas is never the start of a text selection. Left to the UA it is,
+    // and the UA then owns the cursor for as long as the button is down and
+    // paints an I-beam over the drag. `user-select: none` on the canvas does not
+    // cover this — the anchor moves to the selectable page around it rather than
+    // ceasing to exist, so the selection runs into the bar and the Export button.
+    event.preventDefault();
     const at = toDiagramPoint(canvas, event);
     if (!starts(at)) {
       return;
