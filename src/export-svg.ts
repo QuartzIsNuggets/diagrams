@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
+import { messageOf } from "./failure";
+
 import { writeFile } from "./writer";
 
 /** What the exported diagram is called, until the user says otherwise. */
@@ -109,8 +111,7 @@ function enableExporting(
       // describes neither on its own, and it comes from a plugin boundary
       // rather than from anything here.
       .catch((failure: unknown) => {
-        const said = failure instanceof Error ? failure.message : String(failure);
-        error.textContent = `The export could not be written: ${said}`;
+        error.textContent = `The export could not be written: ${messageOf(failure)}`;
       });
   });
 }

@@ -10,8 +10,8 @@
 
 import { describe, expect, it } from "vitest";
 
-import type { Arrow, Box, Diagram, Dot, Equivalence, Path } from "./diagram";
-import { EMPTY_DIAGRAM, takeId } from "./diagram";
+import type { Arrow, Box, Diagram, Dot, Equivalence, NewBox, Path } from "./diagram";
+import { addBox, boxAt, BOX_CLEARANCE, EMPTY_DIAGRAM, takeId } from "./diagram";
 
 // One counter, spent in creation order across all five sorts, exactly as a
 // drawing would spend it — so the ids below are 1…9 without being written down.
@@ -153,5 +153,217 @@ describe("the diagram", () => {
     const nullary: Arrow = { ...ARROW_F, inputs: [] };
 
     expect([concludingRule, pathOffABox, threeWay, sideOnly, nullary]).toHaveLength(5);
+  });
+});
+
+// The geometry below is the diagram's own: no DOM, no pointer events, no faked
+// layout. Everything a gesture needs to ask — what a point lands inside, what a
+// new box pushes aside — is answered from the extents the model already holds.
+
+/** A square box, the way a gesture that had measured its label would ask for one. */
+function square(x: number, y: number, side = 20): NewBox {
+  return { source: "A", x, y, w: side, h: side };
+}
+
+/** A box twice as wide as it is tall: one whose least axis is not its only one. */
+function wide(x: number, y: number): NewBox {
+  return { source: "A", x, y, w: 40, h: 20 };
+}
+
+function drawn(...boxes: NewBox[]): Diagram {
+  return boxes.reduce((diagram, box) => addBox(diagram, box), EMPTY_DIAGRAM);
+}
+
+/** Where each box sits, in row order: the only thing making room ever changes. */
+function centresOf(diagram: Diagram): number[][] {
+  return diagram.boxes.map((box) => [box.x, box.y]);
+}
+
+/**
+ * Whether two boxes are closer than the room boxes keep around themselves.
+ *
+ * Measured off `BOX_CLEARANCE` rather than off the number it currently holds, so
+ * that what is asserted below is the rule — boxes stand apart — and changing how
+ * far apart does not rewrite every expectation. What the clearance *is* is
+ * pinned once, where a box is pushed to an exact place.
+ */
+function tooClose(one: Box, other: Box): boolean {
+  return (
+    Math.abs(one.x - other.x) < (one.w + other.w) / 2 + BOX_CLEARANCE &&
+    Math.abs(one.y - other.y) < (one.h + other.h) / 2 + BOX_CLEARANCE
+  );
+}
+
+function someCrowded(diagram: Diagram): boolean {
+  return diagram.boxes.some((one, index) =>
+    diagram.boxes.slice(index + 1).some((other) => tooClose(one, other)),
+  );
+}
+
+describe("making a box", () => {
+  it("puts one in the diagram, off the counter every id comes from", () => {
+    const next = addBox(EMPTY_DIAGRAM, square(10, -20));
+
+    expect(next.boxes).toEqual([
+      { id: 1, source: "A", x: 10, y: -20, w: 20, h: 20, labelSlot: "top-center" },
+    ]);
+    expect(next.nextId).toBe(2);
+  });
+
+  it("leaves the diagram it was handed unchanged", () => {
+    const one = addBox(EMPTY_DIAGRAM, square(0, 0));
+    const before = structuredClone(one);
+
+    addBox(one, square(5, 0));
+
+    expect(one).toEqual(before);
+    expect(EMPTY_DIAGRAM.boxes).toEqual([]);
+  });
+
+  it("keeps the extent it was given when nothing is in the way", () => {
+    expect(centresOf(drawn(square(0, 0), square(100, 100)))).toEqual([
+      [0, 0],
+      [100, 100],
+    ]);
+  });
+});
+
+describe("a box needing room another holds", () => {
+  it("pushes it aside rather than being refused", () => {
+    const next = drawn(square(0, 0), square(5, 0));
+
+    // The one place the clearance is pinned to its value. Two 20-wide boxes 5
+    // apart fall 27 short of standing clear — the 15 they overlap by, and the
+    // 12 they must then keep — and the pushed one moves by exactly that, coming
+    // to rest 32 from the grower: its walls a clearance from those walls.
+    expect(centresOf(next)).toEqual([
+      [-27, 0],
+      [5, 0],
+    ]);
+    expect(BOX_CLEARANCE).toBe(12);
+    expect(someCrowded(next)).toBe(false);
+  });
+
+  it("moves it along whichever axis needs least, so a row slides rather than jumping", () => {
+    // Short by 22 horizontally and by 30 vertically: a box in the same row. The
+    // clearance lands on both axes alike, so it cannot be what decides.
+    expect(centresOf(drawn(wide(0, 0), wide(30, 2)))).toEqual([
+      [-22, 0],
+      [30, 2],
+    ]);
+  });
+
+  it("pushes a box that was clear of it but not of what it displaced", () => {
+    // The box at -40 is clear of the one at the origin — 40 apart, where 32
+    // would do — until the origin box is pushed onto it.
+    expect(centresOf(drawn(square(0, 0), square(-40, 0), square(10, 0)))).toEqual([
+      [-22, 0],
+      [-54, 0],
+      [10, 0],
+    ]);
+  });
+
+  it("breaks a tie toward x, so one edit always moves the same boxes", () => {
+    expect(centresOf(drawn(square(0, 0), square(10, 10)))).toEqual([
+      [-22, 0],
+      [10, 10],
+    ]);
+  });
+});
+
+describe("making room", () => {
+  it("is never refused, even for a box dropped exactly on top of one", () => {
+    const next = drawn(square(0, 0), square(0, 0));
+
+    expect(next.boxes).toHaveLength(2);
+    expect(someCrowded(next)).toBe(false);
+  });
+
+  it("sends a box pushed exactly onto another outward, rather than back at the grower", () => {
+    // The 100-wide box pushes the one at -40 exactly onto the one at -72, which
+    // leaves the pair no direction to be pushed apart in. Sent the same way —
+    // `+x`, as a coincident pair once was — the second is driven back into the
+    // grower, which pushes it out again, and the two trade places until the
+    // sweeps run out and a diagram comes back with a box sitting on a box.
+    const next = drawn(square(-40, 0), square(-72, 0), { source: "A", x: 0, y: 0, w: 100, h: 100 });
+
+    expect(centresOf(next)).toEqual([
+      [-72, 0],
+      [-104, 0],
+      [0, 0],
+    ]);
+    expect(someCrowded(next)).toBe(false);
+  });
+
+  it("settles a whole grid with every box standing clear", () => {
+    const offsets = [-30, 0, 30];
+    const grid = drawn(...offsets.flatMap((x) => offsets.map((y) => square(x, y))));
+
+    const next = addBox(grid, square(0, 0, 100));
+
+    expect(next.boxes).toHaveLength(10);
+    expect(someCrowded(next)).toBe(false);
+  });
+
+  it("never moves the new box off the rectangle it was drawn on", () => {
+    // Three boxes whose cascade, when the new one is allowed to give way like
+    // any other, walks it ten units off the drag that made it.
+    const next = drawn(
+      { source: "A", x: -5, y: 15, w: 40, h: 30 },
+      { source: "A", x: -10, y: 20, w: 10, h: 40 },
+      { source: "A", x: 20, y: 10, w: 20, h: 30 },
+    );
+
+    expect(next.boxes.at(-1)).toMatchObject({ x: 20, y: 10, w: 20, h: 30 });
+    expect(someCrowded(next)).toBe(false);
+  });
+});
+
+describe("a drawing made gesture by gesture", () => {
+  it("lands every box where it was drawn, and leaves every box standing clear", () => {
+    // A drawing is a sequence of gestures, so the check is too: each box in
+    // turn has to land where it was drawn and leave nothing crowded.
+    let seed = 20260802;
+    const upTo = (bound: number): number => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return Math.floor((seed / 2147483648) * bound);
+    };
+
+    for (let drawing = 0; drawing < 500; drawing += 1) {
+      let diagram = EMPTY_DIAGRAM;
+      for (let gesture = 0; gesture < 2 + upTo(8); gesture += 1) {
+        // The extents a floored gesture can produce, over a canvas-sized plane.
+        const asked = {
+          source: "A",
+          x: upTo(700) - 350,
+          y: upTo(500) - 250,
+          w: 34 + upTo(200),
+          h: 33 + upTo(120),
+        };
+        diagram = addBox(diagram, asked);
+
+        expect(diagram.boxes.at(-1)).toMatchObject(asked);
+        expect(someCrowded(diagram)).toBe(false);
+      }
+    }
+  });
+});
+
+describe("what a point lands inside", () => {
+  const pair = drawn(square(0, 0), square(100, 100));
+
+  it("is the box holding it", () => {
+    expect(boxAt(pair, { x: 5, y: -5 })?.x).toBe(0);
+    expect(boxAt(pair, { x: 95, y: 105 })?.x).toBe(100);
+  });
+
+  it("is nothing at all on empty canvas", () => {
+    expect(boxAt(pair, { x: 50, y: 50 })).toBeUndefined();
+    expect(boxAt(EMPTY_DIAGRAM, { x: 0, y: 0 })).toBeUndefined();
+  });
+
+  it("is measured against the extent the box carries, wall included", () => {
+    expect(boxAt(pair, { x: 10, y: 10 })?.id).toBe(1);
+    expect(boxAt(pair, { x: 10.5, y: 0 })).toBeUndefined();
   });
 });

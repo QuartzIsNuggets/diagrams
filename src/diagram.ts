@@ -2,9 +2,13 @@
 //
 // SPDX-License-Identifier: MIT
 
-// The diagram, as a type and nothing else — no reader, no validator, no
-// serializer. Those arrive with Save, which is the only thing that can receive a
-// file it did not construct.
+// The diagram: what one is, what a point in it lands inside, and how one
+// becomes the next. No reader, no validator, no serializer — those arrive with
+// Save, which is the only thing that can receive a file it did not construct.
+//
+// A diagram is a value. A transition returns the next one and leaves the one it
+// was handed alone, which is what lets a shell hold *current* and what will make
+// undo a stack of past values rather than a log of inverses.
 //
 // The shape here is the shape of the saved file, field for field, so that saving
 // is a serialization rather than a reshape. The file's format version is the one
@@ -85,23 +89,34 @@ export type ElementSide = "left" | "right";
  */
 export type DotSide = "left" | "right" | "above" | "below";
 
+/** A place in the diagram, measured in diagram units with the y-axis up. */
+export interface Point {
+  readonly x: number;
+  readonly y: number;
+}
+
+/**
+ * A rectangle: its centre, and its full extent about that centre.
+ *
+ * A centre rather than a corner, so no corner has to be agreed on and the
+ * y-axis pointing up costs a rectangle nothing.
+ */
+export interface Extent extends Point {
+  readonly w: number;
+  readonly h: number;
+}
+
 /**
  * A type, drawn as a rectangle labelled with its type expression.
  *
- * `x` and `y` are its centre and `w` and `h` its full extent, so no corner has
- * to be agreed on and the y-axis pointing up costs a box nothing. The extent is
- * the box's own rather than fitted to its label, since a label's size stops
- * being knowable to the editor the moment a backend re-typesets it in the
- * document including it; it is auto-fitted when the box is first placed, and the
- * user's from then on.
+ * The extent is the box's own rather than fitted to its label, since a label's
+ * size stops being knowable to the editor the moment a backend re-typesets it in
+ * the document including it. It arrives already floored to hold its label, that
+ * being a measurement only a backend can make.
  */
-export interface Box {
+export interface Box extends Extent {
   readonly id: BoxId;
   readonly source: Source;
-  readonly x: number;
-  readonly y: number;
-  readonly w: number;
-  readonly h: number;
   readonly labelSlot: LabelSlot;
 }
 
@@ -244,4 +259,202 @@ export const EMPTY_DIAGRAM: Diagram = {
  */
 export function takeId<S extends Sort>(diagram: Diagram, _sort: S): readonly [Id<S>, Diagram] {
   return [diagram.nextId as Id<S>, { ...diagram, nextId: diagram.nextId + 1 }];
+}
+
+/**
+ * Which box a point falls in, if any.
+ *
+ * The diagram owns every extent, so it answers this itself and no caller needs
+ * a laid-out page — or a drawing to read back — to ask. Boxes never overlap, so
+ * there is at most one answer; a point on a shared edge takes the earlier box,
+ * which is arbitrary and harmless, no gesture caring which side of a wall it is
+ * on.
+ */
+export function boxAt(diagram: Diagram, at: Point): Box | undefined {
+  return diagram.boxes.find(
+    (box) => Math.abs(at.x - box.x) <= box.w / 2 && Math.abs(at.y - box.y) <= box.h / 2,
+  );
+}
+
+/**
+ * What a gesture supplies for a new box: where it goes and how big, and the
+ * source it is labelled with. Creation owns the rest.
+ */
+export type NewBox = Omit<Box, "id" | "labelSlot">;
+
+/** Where a new box's label sits, until the user drags it elsewhere. */
+const NEW_BOX_SLOT: LabelSlot = "top-center";
+
+/**
+ * The room a box keeps clear of every other, in diagram units.
+ *
+ * Boxes stand apart rather than merely not overlapping. Two walls flush against
+ * each other read as one figure with a line through it, and the notation has
+ * nothing to mean by a shared edge — boxes stand in no relationship to one
+ * another — so the drawing has to say they are two. Room-making measures every
+ * pair as though their extents were this much larger, which is the whole of it:
+ * a box comes to rest exactly this far from the one that pushed it, and a box
+ * this far from its neighbours is not in the way.
+ *
+ * The number is the model's rather than any backend's. How much air a drawing
+ * keeps between its types is the same claim on screen and in TikZ, where a
+ * wall's thickness and the room a label is given inside one are each backend's
+ * own. It is a placeholder until a drawing argues for another.
+ */
+export const BOX_CLEARANCE = 12;
+
+/**
+ * A shortfall thinner than this is floating-point dust, not a box in the way.
+ *
+ * Displacing by exactly the shortfall leaves the pair a clearance apart *in
+ * exact arithmetic*; in binary it can leave a last bit of it, and re-displacing
+ * by that bit is a step that never lands.
+ */
+const TOUCHING = 1e-9;
+
+/**
+ * Put a box in the diagram, and the diagram that has it.
+ *
+ * The extent handed in is already floored to its label — the backend is the
+ * only thing that can measure one, so the floor is settled before the
+ * transition is called and this stays pure and synchronous.
+ *
+ * Creation is never refused for want of room: a box needing space another holds
+ * pushes it aside, space being the box's extent and the {@link BOX_CLEARANCE}
+ * around it. So a drag released across a box evicts it rather than being turned
+ * away, and a box grown to fit a label the user could not see in advance still
+ * lands.
+ */
+export function addBox(diagram: Diagram, box: NewBox): Diagram {
+  const [id, spent] = takeId(diagram, "box");
+  const placed: Box = { ...box, id, labelSlot: NEW_BOX_SLOT };
+  return { ...spent, boxes: makeRoom([...spent.boxes, placed], placed) };
+}
+
+/**
+ * How many sweeps a diagram gets to settle before the boxes are left as they lie.
+ *
+ * A sweep leaves nothing crowded except, now and then, against the grower —
+ * which cannot give way — so it is run again and the fixed box pushes those out.
+ * At the density an editor produces that is one sweep, occasionally two. The
+ * bound is here because a packing tight enough can cycle instead, and a rule the
+ * model runs has to come back.
+ */
+const SETTLING_SWEEPS = 20;
+
+/**
+ * Move whatever `grower` is in the way of, and whatever they are in turn, until
+ * every box stands clear of every other.
+ *
+ * **The grower itself never moves.** It is the rectangle the user just drew, and
+ * a box coming to rest anywhere else would make the mark they were looking at a
+ * lie — so a drag across an existing box evicts it rather than being nudged off
+ * it. Every other box gives way, and one wedged against the grower is pushed off
+ * it by the sweep after.
+ *
+ * It cannot fail, because nothing bounds the plane — the export's frame is
+ * derived from what is drawn.
+ *
+ * Alignment is not preserved: a box in the same column as a displaced one, but
+ * not itself in the way, stays put, so a neat column can go ragged. The trade is
+ * for never refusing a box, and the row order is left alone so ids stay sorted.
+ */
+function makeRoom(boxes: readonly Box[], grower: Box): readonly Box[] {
+  let placed = boxes;
+  for (let sweep = 0; sweep < SETTLING_SWEEPS && crowded(placed); sweep += 1) {
+    placed = sweepFrom(placed, grower);
+  }
+  return placed;
+}
+
+/** Whether any two boxes are inside each other's room. */
+function crowded(boxes: readonly Box[]): boolean {
+  return boxes.some((box, index) =>
+    boxes.slice(index + 1).some((other) => shortfallOf(box, other) !== undefined),
+  );
+}
+
+/**
+ * One breadth-first sweep out from the grower: each box in the way slides clear
+ * of the one pushing it, and then pushes its own neighbours in turn.
+ */
+function sweepFrom(boxes: readonly Box[], grower: Box): readonly Box[] {
+  const placed = new Map(boxes.map((box) => [box.id, box]));
+  // The queue is walked as it grows: a box pushed here is a pusher further down.
+  const queue: Box[] = [grower];
+  for (const queued of queue) {
+    // Re-read it — a box queued as a pusher may have been pushed since.
+    const pusher = placed.get(queued.id) ?? queued;
+    for (const other of placed.values()) {
+      const moved =
+        other.id === pusher.id || other.id === grower.id
+          ? undefined
+          : displace(pusher, other, grower);
+      if (moved) {
+        placed.set(moved.id, moved);
+        queue.push(moved);
+      }
+    }
+  }
+  return boxes.map((box) => placed.get(box.id) ?? box);
+}
+
+/**
+ * How far short of standing clear two boxes are, on each axis — or nothing
+ * where they are already a {@link BOX_CLEARANCE} apart, a shortfall thinner than
+ * {@link TOUCHING} being arithmetic dust.
+ *
+ * The clearance enters here and nowhere else: overlapping and merely crowding
+ * are one question, so every rule that asks it — whether a diagram has settled,
+ * which boxes a grower displaces, how far each goes — takes the room between
+ * boxes with it and none of them names it. It lands on both axes alike, so
+ * which axis needs least is the axis that needed least before.
+ */
+function shortfallOf(one: Box, other: Box): Point | undefined {
+  const x = (one.w + other.w) / 2 + BOX_CLEARANCE - Math.abs(other.x - one.x);
+  const y = (one.h + other.h) / 2 + BOX_CLEARANCE - Math.abs(other.y - one.y);
+  return x > TOUCHING && y > TOUCHING ? { x, y } : undefined;
+}
+
+/**
+ * Slide `other` clear of `pusher`, or leave it where it is.
+ *
+ * It moves along **whichever axis needs least** — the smaller of the two
+ * shortfalls — by exactly that much, and away from the box pushing it, which
+ * leaves the pair a {@link BOX_CLEARANCE} apart on that axis. Least-axis is what
+ * keeps grids grid-shaped without being told they are grids: a box in the same
+ * row falls short by a sliver horizontally and by its full height vertically,
+ * so it slides sideways rather than jumping a row.
+ *
+ * A tie goes to x. Ticket 02 puts a tier before that one — the axis that grew
+ * more — which creation has no answer for, nothing having grown; it belongs to
+ * whatever first widens a box already placed.
+ */
+function displace(pusher: Box, other: Box, grower: Box): Box | undefined {
+  const shortfall = shortfallOf(pusher, other);
+  if (!shortfall) {
+    return undefined;
+  }
+  return shortfall.x <= shortfall.y
+    ? { ...other, x: other.x + awayFrom(other.x, pusher.x, grower.x) * shortfall.x }
+    : { ...other, y: other.y + awayFrom(other.y, pusher.y, grower.y) * shortfall.y };
+}
+
+/**
+ * Which way a box gives way, on the axis it is giving way along: away from the
+ * box pushing it, and where the two share that coordinate exactly, outward from
+ * the grower.
+ *
+ * The direction has to come from the pusher, or a box between the grower and the
+ * one shoving it would be driven further into it. But two boxes on one centre
+ * leave no direction to take, and sending them both the same way — `+x`, as this
+ * did — is what lets a cascade cycle: a box pushed onto another is sent back
+ * toward the grower, which pushes it out again, forever, and
+ * {@link SETTLING_SWEEPS} then returns a diagram with two boxes on top of each
+ * other. Outward from the grower is the tie-break that keeps every displacement
+ * outward, which is the whole reason the cascade terminates. Coincident with the
+ * grower too, nothing is outward and `+x` is as good a direction as any.
+ */
+function awayFrom(box: number, pusher: number, grower: number): number {
+  return Math.sign(box - pusher) || Math.sign(box - grower) || 1;
 }

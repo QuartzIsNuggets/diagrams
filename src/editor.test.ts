@@ -1,0 +1,288 @@
+// SPDX-FileCopyrightText: 2026 Alexis Ronez <alexis.ronez@mailfence.com>
+//
+// SPDX-License-Identifier: MIT
+
+// Making a box, end to end: a press on empty canvas, a type expression, and a
+// box on screen because the diagram holds one. The rules the shell goes by are
+// tested where they live — the geometry in diagram.test.ts with no DOM, the
+// gesture in render-svg.test.ts — and what is left here is the wiring between
+// them, which is only true of a real document.
+
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { createCanvas, enablePlopping } from "./canvas";
+import { createEditor } from "./editor";
+import { createLabelForm } from "./label-form";
+
+let canvas: SVGSVGElement;
+let form: HTMLFormElement;
+
+function boxesOn(): SVGRectElement[] {
+  return [...canvas.querySelectorAll<SVGRectElement>("g.diagram g.box > rect")];
+}
+
+function extentOf(rect: SVGRectElement | undefined): number[] {
+  return ["x", "y", "width", "height"].map((name) => Number(rect?.getAttribute(name)));
+}
+
+/** Whether two drawn rectangles share any area at all. */
+function overlapping(one: number[], other: number[]): boolean {
+  const [x = 0, y = 0, w = 0, h = 0] = one;
+  const [otherX = 0, otherY = 0, otherW = 0, otherH = 0] = other;
+  return x < otherX + otherW && otherX < x + w && y < otherY + otherH && otherY < y + h;
+}
+
+function pointer(kind: string, clientX: number, clientY: number): void {
+  canvas.dispatchEvent(new PointerEvent(kind, { clientX, clientY, button: 0, bubbles: true }));
+}
+
+/** Press, drag and release: the whole of what makes a box, bar naming it. */
+function dragOut(fromX: number, fromY: number, toX: number, toY: number): void {
+  pointer("pointerdown", fromX, fromY);
+  pointer("pointermove", toX, toY);
+  pointer("pointerup", toX, toY);
+}
+
+/** Type `latex` into the bar and press its button, the way a user would. */
+function submit(latex: string): void {
+  const input = form.querySelector("input");
+  const button = form.querySelector<HTMLButtonElement>("button[type=submit]");
+  if (!input || !button) {
+    throw new Error("the bar has lost its input");
+  }
+  input.value = latex;
+  button.click();
+}
+
+function press(key: string): void {
+  form.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+}
+
+/**
+ * Give the bar an extent.
+ *
+ * jsdom has no layout, so every `getBoundingClientRect()` is zeros — and the
+ * bar's own extent is half of where it goes, the shell placing it by its corner
+ * rather than translating it onto the point.
+ */
+function sizeBar(width: number, height: number): void {
+  form.getBoundingClientRect = (): DOMRect => new DOMRect(0, 0, width, height);
+}
+
+/** Drag a box out and name it, waiting for it to land. */
+async function makeBox(
+  from: [number, number],
+  to: [number, number],
+  source = "A",
+): Promise<SVGRectElement[]> {
+  const before = boxesOn().length;
+  dragOut(from[0], from[1], to[0], to[1]);
+  submit(source);
+  await vi.waitFor(() => expect(boxesOn()).toHaveLength(before + 1));
+  return boxesOn();
+}
+
+function refusalText(): string {
+  return document.querySelector(".canvas-error")?.textContent ?? "";
+}
+
+beforeEach(() => {
+  canvas = createCanvas();
+  enablePlopping(canvas);
+  form = createLabelForm(canvas);
+  document.body.replaceChildren(createEditor(canvas, form), form);
+});
+
+describe("the editor", () => {
+  it("draws the diagram it starts with, which holds nothing", () => {
+    expect(canvas.querySelector("g.diagram")).not.toBeNull();
+    expect(boxesOn()).toHaveLength(0);
+  });
+
+  it("has a region for a refusal before it has anything to refuse", () => {
+    const region = document.querySelector(".canvas-error");
+    expect(region?.getAttribute("role")).toBe("alert");
+    expect(region?.textContent).toBe("");
+  });
+});
+
+describe("a drag on empty canvas", () => {
+  it("asks for a type expression, at the slot the label will take", () => {
+    sizeBar(200, 30);
+
+    dragOut(40, 40, 140, 90);
+
+    expect(form.classList.contains("asking")).toBe(true);
+    // The middle of the bar's bottom edge sits on the middle of the rectangle's
+    // top edge — (90, 40) in page coordinates — so its corner is half a width
+    // left of that and a whole height above it.
+    expect([form.style.left, form.style.top]).toEqual(["-10px", "10px"]);
+  });
+
+  it("puts no box on the canvas until a source comes back", () => {
+    dragOut(40, 40, 140, 90);
+
+    expect(boxesOn()).toHaveLength(0);
+    expect(canvas.querySelector("g.chrome > rect")).not.toBeNull();
+  });
+
+  it("makes a box the size of the drag once one does", async () => {
+    const [box] = await makeBox([40, 40], [240, 140]);
+
+    expect(extentOf(box)).toEqual([40, -140, 200, 100]);
+    expect(canvas.querySelector("g.chrome")).toBeNull();
+  });
+
+  it("draws the box's label from the source it was named with", async () => {
+    await makeBox([40, 40], [240, 140]);
+
+    expect(canvas.querySelectorAll("g.box-label path").length).toBeGreaterThan(0);
+  });
+
+  it("empties the bar, so the next box starts from nothing typed", async () => {
+    await makeBox([40, 40], [240, 140]);
+
+    expect(form.querySelector("input")?.value).toBe("");
+    expect(form.classList.contains("asking")).toBe(false);
+  });
+});
+
+describe("a box too small for its label", () => {
+  it("is grown to fit it", async () => {
+    const [box] = await makeBox([100, 100], [104, 104]);
+
+    const [, , width, height] = extentOf(box);
+    expect(width).toBeGreaterThan(4);
+    expect(height).toBeGreaterThan(4);
+  });
+
+  it("needs no threshold telling a click from a drag — a click is a drag of no size", async () => {
+    const [tiny] = await makeBox([100, 100], [104, 104]);
+    const [clicked] = await makeBox([400, 400], [400, 400]);
+
+    const [, , tinyWidth, tinyHeight] = extentOf(tiny);
+    const [, , clickedWidth, clickedHeight] = extentOf(clicked);
+    expect([clickedWidth, clickedHeight]).toEqual([tinyWidth, tinyHeight]);
+  });
+});
+
+describe("a box needing room another holds", () => {
+  it("is never refused: the drag lands and the other slides clear", async () => {
+    await makeBox([100, 100], [100, 100]);
+
+    // Pressed on empty canvas and released across the box already there.
+    const boxes = await makeBox([200, 100], [110, 100]);
+
+    expect(boxes).toHaveLength(2);
+    expect(overlapping(extentOf(boxes[0]), extentOf(boxes[1]))).toBe(false);
+  });
+});
+
+describe("a source that will not typeset", () => {
+  const BAD = "\\notacontrolsequence{x}";
+
+  it("makes no box, and the rectangle goes with it", async () => {
+    dragOut(40, 40, 240, 140);
+    submit(BAD);
+
+    await vi.waitFor(() => expect(refusalText()).toMatch(/undefined control sequence/iu));
+    expect(boxesOn()).toHaveLength(0);
+    expect(canvas.querySelector("g.chrome")).toBeNull();
+  });
+
+  it("keeps the source in the input to be corrected", async () => {
+    dragOut(40, 40, 240, 140);
+    submit(BAD);
+
+    await vi.waitFor(() => expect(refusalText()).toBeTruthy());
+    expect(form.querySelector("input")?.value).toBe(BAD);
+  });
+
+  it("is forgotten as soon as a box lands", async () => {
+    dragOut(40, 40, 240, 140);
+    submit(BAD);
+    await vi.waitFor(() => expect(refusalText()).toBeTruthy());
+
+    await makeBox([300, 300], [400, 400]);
+
+    expect(refusalText()).toBe("");
+  });
+
+  it("does not stop the box that follows it", async () => {
+    dragOut(40, 40, 240, 140);
+    submit(BAD);
+    await vi.waitFor(() => expect(refusalText()).toBeTruthy());
+
+    const [box] = await makeBox([300, 300], [400, 400]);
+
+    expect(extentOf(box)).toEqual([300, -400, 100, 100]);
+  });
+});
+
+describe("giving up on a box", () => {
+  it("leaves none, Escape having nothing to name", async () => {
+    dragOut(40, 40, 240, 140);
+
+    press("Escape");
+
+    await vi.waitFor(() => expect(canvas.querySelector("g.chrome")).toBeNull());
+    expect(boxesOn()).toHaveLength(0);
+    expect(refusalText()).toBe("");
+  });
+
+  it("leaves none for a submit with nothing in it either", async () => {
+    dragOut(40, 40, 240, 140);
+
+    submit("   ");
+
+    await vi.waitFor(() => expect(canvas.querySelector("g.chrome")).toBeNull());
+    expect(boxesOn()).toHaveLength(0);
+  });
+
+  it("leaves the bar back in its corner, ready for the next one", async () => {
+    dragOut(40, 40, 240, 140);
+    press("Escape");
+    await vi.waitFor(() => expect(canvas.querySelector("g.chrome")).toBeNull());
+    expect(form.classList.contains("asking")).toBe(false);
+    expect(form.style.left).toBe("");
+
+    const [box] = await makeBox([300, 300], [400, 400]);
+
+    expect(extentOf(box)).toEqual([300, -400, 100, 100]);
+  });
+});
+
+describe("a press inside a box", () => {
+  it("starts no box — the diagram says what the press landed in", async () => {
+    await makeBox([40, 40], [240, 140]);
+
+    pointer("pointerdown", 100, 100);
+    pointer("pointermove", 150, 120);
+
+    expect(canvas.querySelector("g.chrome")).toBeNull();
+    pointer("pointerup", 150, 120);
+    expect(boxesOn()).toHaveLength(1);
+  });
+});
+
+describe("what the canvas holds besides the diagram", () => {
+  it("gains no term-dot from a gesture that made a box", async () => {
+    await makeBox([40, 40], [240, 140]);
+
+    expect(canvas.querySelectorAll("circle.term-dot")).toHaveLength(0);
+  });
+
+  it("keeps term-dots and typeset labels through a redraw", async () => {
+    await makeBox([40, 40], [240, 140]);
+    pointer("pointerdown", 100, 100);
+    pointer("pointerup", 100, 100);
+    submit("P(x)");
+    await vi.waitFor(() => expect(canvas.querySelectorAll("g.math-label")).toHaveLength(1));
+
+    await makeBox([400, 400], [500, 500], "B");
+
+    expect(canvas.querySelectorAll("circle.term-dot")).toHaveLength(1);
+    expect(canvas.querySelectorAll("g.math-label")).toHaveLength(1);
+    expect(boxesOn()).toHaveLength(2);
+  });
+});
