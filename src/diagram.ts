@@ -286,11 +286,29 @@ export type NewBox = Omit<Box, "id" | "labelSlot">;
 const NEW_BOX_SLOT: LabelSlot = "top-center";
 
 /**
- * An overlap thinner than this is floating-point dust, not a box in the way.
+ * The room a box keeps clear of every other, in diagram units.
  *
- * Displacing by exactly the overlap leaves the pair touching *in exact
- * arithmetic*; in binary it can leave a last bit of it, and re-displacing by
- * that bit is a step that never lands.
+ * Boxes stand apart rather than merely not overlapping. Two walls flush against
+ * each other read as one figure with a line through it, and the notation has
+ * nothing to mean by a shared edge — boxes stand in no relationship to one
+ * another — so the drawing has to say they are two. Room-making measures every
+ * pair as though their extents were this much larger, which is the whole of it:
+ * a box comes to rest exactly this far from the one that pushed it, and a box
+ * this far from its neighbours is not in the way.
+ *
+ * The number is the model's rather than any backend's. How much air a drawing
+ * keeps between its types is the same claim on screen and in TikZ, where a
+ * wall's thickness and the room a label is given inside one are each backend's
+ * own. It is a placeholder until a drawing argues for another.
+ */
+export const BOX_CLEARANCE = 12;
+
+/**
+ * A shortfall thinner than this is floating-point dust, not a box in the way.
+ *
+ * Displacing by exactly the shortfall leaves the pair a clearance apart *in
+ * exact arithmetic*; in binary it can leave a last bit of it, and re-displacing
+ * by that bit is a step that never lands.
  */
 const TOUCHING = 1e-9;
 
@@ -301,10 +319,11 @@ const TOUCHING = 1e-9;
  * only thing that can measure one, so the floor is settled before the
  * transition is called and this stays pure and synchronous.
  *
- * Creation is never refused for overlap: a box needing room another holds
- * pushes it aside. So a drag released across a box evicts it rather than being
- * turned away, and a box grown to fit a label the user could not see in advance
- * still lands.
+ * Creation is never refused for want of room: a box needing space another holds
+ * pushes it aside, space being the box's extent and the {@link BOX_CLEARANCE}
+ * around it. So a drag released across a box evicts it rather than being turned
+ * away, and a box grown to fit a label the user could not see in advance still
+ * lands.
  */
 export function addBox(diagram: Diagram, box: NewBox): Diagram {
   const [id, spent] = takeId(diagram, "box");
@@ -315,7 +334,7 @@ export function addBox(diagram: Diagram, box: NewBox): Diagram {
 /**
  * How many sweeps a diagram gets to settle before the boxes are left as they lie.
  *
- * A sweep leaves nothing overlapping except, now and then, against the grower —
+ * A sweep leaves nothing crowded except, now and then, against the grower —
  * which cannot give way — so it is run again and the fixed box pushes those out.
  * At the density an editor produces that is one sweep, occasionally two. The
  * bound is here because a packing tight enough can cycle instead, and a rule the
@@ -325,7 +344,7 @@ const SETTLING_SWEEPS = 20;
 
 /**
  * Move whatever `grower` is in the way of, and whatever they are in turn, until
- * nothing overlaps.
+ * every box stands clear of every other.
  *
  * **The grower itself never moves.** It is the rectangle the user just drew, and
  * a box coming to rest anywhere else would make the mark they were looking at a
@@ -348,10 +367,10 @@ function makeRoom(boxes: readonly Box[], grower: Box): readonly Box[] {
   return placed;
 }
 
-/** Whether any two boxes share space. */
+/** Whether any two boxes are inside each other's room. */
 function crowded(boxes: readonly Box[]): boolean {
   return boxes.some((box, index) =>
-    boxes.slice(index + 1).some((other) => overlapOf(box, other) !== undefined),
+    boxes.slice(index + 1).some((other) => shortfallOf(box, other) !== undefined),
   );
 }
 
@@ -368,7 +387,9 @@ function sweepFrom(boxes: readonly Box[], grower: Box): readonly Box[] {
     const pusher = placed.get(queued.id) ?? queued;
     for (const other of placed.values()) {
       const moved =
-        other.id === pusher.id || other.id === grower.id ? undefined : displace(pusher, other);
+        other.id === pusher.id || other.id === grower.id
+          ? undefined
+          : displace(pusher, other, grower);
       if (moved) {
         placed.set(moved.id, moved);
         queue.push(moved);
@@ -379,36 +400,61 @@ function sweepFrom(boxes: readonly Box[], grower: Box): readonly Box[] {
 }
 
 /**
- * How deeply two boxes share space, on each axis — or nothing where they merely
- * touch, an overlap thinner than {@link TOUCHING} being arithmetic dust.
+ * How far short of standing clear two boxes are, on each axis — or nothing
+ * where they are already a {@link BOX_CLEARANCE} apart, a shortfall thinner than
+ * {@link TOUCHING} being arithmetic dust.
+ *
+ * The clearance enters here and nowhere else: overlapping and merely crowding
+ * are one question, so every rule that asks it — whether a diagram has settled,
+ * which boxes a grower displaces, how far each goes — takes the room between
+ * boxes with it and none of them names it. It lands on both axes alike, so
+ * which axis needs least is the axis that needed least before.
  */
-function overlapOf(one: Box, other: Box): Point | undefined {
-  const x = (one.w + other.w) / 2 - Math.abs(other.x - one.x);
-  const y = (one.h + other.h) / 2 - Math.abs(other.y - one.y);
+function shortfallOf(one: Box, other: Box): Point | undefined {
+  const x = (one.w + other.w) / 2 + BOX_CLEARANCE - Math.abs(other.x - one.x);
+  const y = (one.h + other.h) / 2 + BOX_CLEARANCE - Math.abs(other.y - one.y);
   return x > TOUCHING && y > TOUCHING ? { x, y } : undefined;
 }
 
 /**
  * Slide `other` clear of `pusher`, or leave it where it is.
  *
- * It moves along **whichever axis needs least** — horizontal or vertical
- * overlap, whichever is smaller — by exactly that overlap, and away from the box
- * pushing it. Least-axis is what keeps grids grid-shaped without being told they
- * are grids: a box in the same row is clipped by a sliver horizontally and by
- * its full height vertically, so it slides sideways rather than jumping a row.
+ * It moves along **whichever axis needs least** — the smaller of the two
+ * shortfalls — by exactly that much, and away from the box pushing it, which
+ * leaves the pair a {@link BOX_CLEARANCE} apart on that axis. Least-axis is what
+ * keeps grids grid-shaped without being told they are grids: a box in the same
+ * row falls short by a sliver horizontally and by its full height vertically,
+ * so it slides sideways rather than jumping a row.
  *
  * A tie goes to x. Ticket 02 puts a tier before that one — the axis that grew
  * more — which creation has no answer for, nothing having grown; it belongs to
- * whatever first widens a box already placed. Two boxes on the same centre have
- * no direction to be pushed in either, and go the same way, so one edit always
- * moves the same boxes.
+ * whatever first widens a box already placed.
  */
-function displace(pusher: Box, other: Box): Box | undefined {
-  const overlap = overlapOf(pusher, other);
-  if (!overlap) {
+function displace(pusher: Box, other: Box, grower: Box): Box | undefined {
+  const shortfall = shortfallOf(pusher, other);
+  if (!shortfall) {
     return undefined;
   }
-  return overlap.x <= overlap.y
-    ? { ...other, x: other.x + Math.sign(other.x - pusher.x || 1) * overlap.x }
-    : { ...other, y: other.y + Math.sign(other.y - pusher.y || 1) * overlap.y };
+  return shortfall.x <= shortfall.y
+    ? { ...other, x: other.x + awayFrom(other.x, pusher.x, grower.x) * shortfall.x }
+    : { ...other, y: other.y + awayFrom(other.y, pusher.y, grower.y) * shortfall.y };
+}
+
+/**
+ * Which way a box gives way, on the axis it is giving way along: away from the
+ * box pushing it, and where the two share that coordinate exactly, outward from
+ * the grower.
+ *
+ * The direction has to come from the pusher, or a box between the grower and the
+ * one shoving it would be driven further into it. But two boxes on one centre
+ * leave no direction to take, and sending them both the same way — `+x`, as this
+ * did — is what lets a cascade cycle: a box pushed onto another is sent back
+ * toward the grower, which pushes it out again, forever, and
+ * {@link SETTLING_SWEEPS} then returns a diagram with two boxes on top of each
+ * other. Outward from the grower is the tie-break that keeps every displacement
+ * outward, which is the whole reason the cascade terminates. Coincident with the
+ * grower too, nothing is outward and `+x` is as good a direction as any.
+ */
+function awayFrom(box: number, pusher: number, grower: number): number {
+  return Math.sign(box - pusher) || Math.sign(box - grower) || 1;
 }

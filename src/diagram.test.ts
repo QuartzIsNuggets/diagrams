@@ -11,7 +11,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Arrow, Box, Diagram, Dot, Equivalence, NewBox, Path } from "./diagram";
-import { addBox, boxAt, EMPTY_DIAGRAM, takeId } from "./diagram";
+import { addBox, boxAt, BOX_CLEARANCE, EMPTY_DIAGRAM, takeId } from "./diagram";
 
 // One counter, spent in creation order across all five sorts, exactly as a
 // drawing would spend it — so the ids below are 1…9 without being written down.
@@ -179,16 +179,24 @@ function centresOf(diagram: Diagram): number[][] {
   return diagram.boxes.map((box) => [box.x, box.y]);
 }
 
-function overlapping(one: Box, other: Box): boolean {
+/**
+ * Whether two boxes are closer than the room boxes keep around themselves.
+ *
+ * Measured off `BOX_CLEARANCE` rather than off the number it currently holds, so
+ * that what is asserted below is the rule — boxes stand apart — and changing how
+ * far apart does not rewrite every expectation. What the clearance *is* is
+ * pinned once, where a box is pushed to an exact place.
+ */
+function tooClose(one: Box, other: Box): boolean {
   return (
-    Math.abs(one.x - other.x) < (one.w + other.w) / 2 &&
-    Math.abs(one.y - other.y) < (one.h + other.h) / 2
+    Math.abs(one.x - other.x) < (one.w + other.w) / 2 + BOX_CLEARANCE &&
+    Math.abs(one.y - other.y) < (one.h + other.h) / 2 + BOX_CLEARANCE
   );
 }
 
-function someOverlap(diagram: Diagram): boolean {
+function someCrowded(diagram: Diagram): boolean {
   return diagram.boxes.some((one, index) =>
-    diagram.boxes.slice(index + 1).some((other) => overlapping(one, other)),
+    diagram.boxes.slice(index + 1).some((other) => tooClose(one, other)),
   );
 }
 
@@ -224,33 +232,40 @@ describe("a box needing room another holds", () => {
   it("pushes it aside rather than being refused", () => {
     const next = drawn(square(0, 0), square(5, 0));
 
-    // The pushed box clears by exactly the overlap — 15 of the 20 it shares.
+    // The one place the clearance is pinned to its value. Two 20-wide boxes 5
+    // apart fall 27 short of standing clear — the 15 they overlap by, and the
+    // 12 they must then keep — and the pushed one moves by exactly that, coming
+    // to rest 32 from the grower: its walls a clearance from those walls.
     expect(centresOf(next)).toEqual([
-      [-15, 0],
+      [-27, 0],
       [5, 0],
     ]);
-    expect(someOverlap(next)).toBe(false);
+    expect(BOX_CLEARANCE).toBe(12);
+    expect(someCrowded(next)).toBe(false);
   });
 
   it("moves it along whichever axis needs least, so a row slides rather than jumping", () => {
-    // Clipped by 10 horizontally and by 18 vertically: a box in the same row.
+    // Short by 22 horizontally and by 30 vertically: a box in the same row. The
+    // clearance lands on both axes alike, so it cannot be what decides.
     expect(centresOf(drawn(wide(0, 0), wide(30, 2)))).toEqual([
-      [-10, 0],
+      [-22, 0],
       [30, 2],
     ]);
   });
 
   it("pushes a box that was clear of it but not of what it displaced", () => {
-    expect(centresOf(drawn(square(0, 0), square(-22, 0), square(10, 0)))).toEqual([
-      [-10, 0],
-      [-30, 0],
+    // The box at -40 is clear of the one at the origin — 40 apart, where 32
+    // would do — until the origin box is pushed onto it.
+    expect(centresOf(drawn(square(0, 0), square(-40, 0), square(10, 0)))).toEqual([
+      [-22, 0],
+      [-54, 0],
       [10, 0],
     ]);
   });
 
   it("breaks a tie toward x, so one edit always moves the same boxes", () => {
     expect(centresOf(drawn(square(0, 0), square(10, 10)))).toEqual([
-      [-10, 0],
+      [-22, 0],
       [10, 10],
     ]);
   });
@@ -261,17 +276,33 @@ describe("making room", () => {
     const next = drawn(square(0, 0), square(0, 0));
 
     expect(next.boxes).toHaveLength(2);
-    expect(someOverlap(next)).toBe(false);
+    expect(someCrowded(next)).toBe(false);
   });
 
-  it("settles a whole grid with nothing overlapping", () => {
+  it("sends a box pushed exactly onto another outward, rather than back at the grower", () => {
+    // The 100-wide box pushes the one at -40 exactly onto the one at -72, which
+    // leaves the pair no direction to be pushed apart in. Sent the same way —
+    // `+x`, as a coincident pair once was — the second is driven back into the
+    // grower, which pushes it out again, and the two trade places until the
+    // sweeps run out and a diagram comes back with a box sitting on a box.
+    const next = drawn(square(-40, 0), square(-72, 0), { source: "A", x: 0, y: 0, w: 100, h: 100 });
+
+    expect(centresOf(next)).toEqual([
+      [-72, 0],
+      [-104, 0],
+      [0, 0],
+    ]);
+    expect(someCrowded(next)).toBe(false);
+  });
+
+  it("settles a whole grid with every box standing clear", () => {
     const offsets = [-30, 0, 30];
     const grid = drawn(...offsets.flatMap((x) => offsets.map((y) => square(x, y))));
 
     const next = addBox(grid, square(0, 0, 100));
 
     expect(next.boxes).toHaveLength(10);
-    expect(someOverlap(next)).toBe(false);
+    expect(someCrowded(next)).toBe(false);
   });
 
   it("never moves the new box off the rectangle it was drawn on", () => {
@@ -284,14 +315,14 @@ describe("making room", () => {
     );
 
     expect(next.boxes.at(-1)).toMatchObject({ x: 20, y: 10, w: 20, h: 30 });
-    expect(someOverlap(next)).toBe(false);
+    expect(someCrowded(next)).toBe(false);
   });
 });
 
 describe("a drawing made gesture by gesture", () => {
-  it("lands every box where it was drawn, and leaves nothing overlapping", () => {
+  it("lands every box where it was drawn, and leaves every box standing clear", () => {
     // A drawing is a sequence of gestures, so the check is too: each box in
-    // turn has to land where it was drawn and leave nothing overlapping.
+    // turn has to land where it was drawn and leave nothing crowded.
     let seed = 20260802;
     const upTo = (bound: number): number => {
       seed = (seed * 1103515245 + 12345) % 2147483648;
@@ -312,7 +343,7 @@ describe("a drawing made gesture by gesture", () => {
         diagram = addBox(diagram, asked);
 
         expect(diagram.boxes.at(-1)).toMatchObject(asked);
-        expect(someOverlap(diagram)).toBe(false);
+        expect(someCrowded(diagram)).toBe(false);
       }
     }
   });
