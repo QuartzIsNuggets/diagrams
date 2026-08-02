@@ -58,6 +58,17 @@ function press(key: string): void {
   form.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
 }
 
+/**
+ * Give the bar an extent.
+ *
+ * jsdom has no layout, so every `getBoundingClientRect()` is zeros — and the
+ * bar's own extent is half of where it goes, the shell placing it by its corner
+ * rather than translating it onto the point.
+ */
+function sizeBar(width: number, height: number): void {
+  form.getBoundingClientRect = (): DOMRect => new DOMRect(0, 0, width, height);
+}
+
 /** Drag a box out and name it, waiting for it to land. */
 async function makeBox(
   from: [number, number],
@@ -97,11 +108,15 @@ describe("the editor", () => {
 
 describe("a drag on empty canvas", () => {
   it("asks for a type expression, at the slot the label will take", () => {
+    sizeBar(200, 30);
+
     dragOut(40, 40, 140, 90);
 
     expect(form.classList.contains("asking")).toBe(true);
-    // Centred on the top edge of the rectangle, in page coordinates.
-    expect([form.style.left, form.style.top]).toEqual(["90px", "40px"]);
+    // The middle of the bar's bottom edge sits on the middle of the rectangle's
+    // top edge — (90, 40) in page coordinates — so its corner is half a width
+    // left of that and a whole height above it.
+    expect([form.style.left, form.style.top]).toEqual(["-10px", "10px"]);
   });
 
   it("puts no box on the canvas until a source comes back", () => {

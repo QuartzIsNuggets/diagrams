@@ -88,8 +88,13 @@ export function askForSource(form: HTMLFormElement, at: PagePoint): Promise<Sour
     return Promise.resolve("");
   }
   form.classList.add("asking");
-  form.style.left = `${String(at.left)}px`;
-  form.style.top = `${String(at.top)}px`;
+  // The point is where the label goes, which is the middle of the bar's bottom
+  // edge, so the corner it is placed by is that point less half its width and
+  // all of its height. Measured rather than left to a percentage transform,
+  // which would blur it — see `.label-form.asking` in the stylesheet.
+  const { width, height } = form.getBoundingClientRect();
+  form.style.left = `${String(at.left - width / 2)}px`;
+  form.style.top = `${String(at.top - height)}px`;
   bar.input.focus();
   bar.input.select();
 

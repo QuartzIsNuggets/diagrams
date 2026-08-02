@@ -58,11 +58,14 @@ body {
 
 /* The one input, unpinned: while a gesture is naming something it leaves its
    corner for the label slot of the mark it names, which the shell sets as an
-   inline `left`/`top`. Centred on that point, and clear of the corner it came
-   from. */
+   inline `left`/`top` — already offset for the bar's own extent, so that it
+   stands centred above the point rather than being translated onto it. A
+   transform would be the shorter way to say that and cannot be used: it makes a
+   fixed element a composited layer, and the layer lands on the fractional
+   offset half a `ch`-derived width comes to, which WebKit resamples into a
+   blur. */
 .label-form.asking {
   bottom: auto;
-  transform: translate(-50%, -100%);
 }
 
 /* A column pinned by its bottom-right corner: a message appearing above the
