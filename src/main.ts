@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: MIT
 
-import { createCanvas, enablePlopping } from "./canvas";
+import { createCanvas } from "./canvas";
 import { createEditor } from "./editor";
 import { createExportControls } from "./export-svg";
 import { createLabelForm } from "./label-form";
@@ -14,8 +14,6 @@ if (!app) {
 }
 
 const canvas = createCanvas();
-enablePlopping(canvas);
-
 const labelForm = createLabelForm(canvas);
 const editor = createEditor(canvas, labelForm);
 const exportControls = createExportControls(canvas);

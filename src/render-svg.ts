@@ -12,8 +12,9 @@
 // walls are ink rather than meaning, and the TikZ emitter will pick its own.
 
 import { SVG_NS } from "./canvas";
-import type { Box, Diagram, Extent, Point, Source } from "./diagram";
-import { BOX_INK } from "./palette";
+import type { Box, Diagram, Dot, Extent, Point, Source } from "./diagram";
+import { DOT_SEPARATION, dotsIn, placeOf } from "./diagram";
+import { BOX_INK, INK } from "./palette";
 import type { GlyphRun } from "./typesetting";
 import { typesetLatex, UNITS_PER_EM } from "./typesetting";
 
@@ -25,6 +26,17 @@ const LABEL_PADDING = 8;
 
 /** How thick a box's wall is drawn, in diagram units. */
 const BOX_STROKE = 2;
+
+/**
+ * How big a term-dot is drawn: the largest the model's separation allows.
+ *
+ * Two dots exactly a {@link DOT_SEPARATION} apart touch at a point and no more,
+ * so this is the most ink the constraint leaves room for. Taken from the model's
+ * number rather than chosen beside it — the model names no size, and a backend
+ * that picked one of its own could draw dots the model thinks stand clear
+ * overlapping.
+ */
+const DOT_RADIUS = DOT_SEPARATION / 2;
 
 /**
  * The y-up flip: the model's axis turned into SVG's, written once.
@@ -59,7 +71,7 @@ export function renderDiagram(canvas: SVGSVGElement, diagram: Diagram): void {
   // question to answer, so nothing is ever read back off the drawing.
   root.setAttribute("pointer-events", "none");
   for (const box of diagram.boxes) {
-    root.append(drawBox(box));
+    root.append(drawBox(box, dotsIn(diagram, box)));
   }
 
   const before = canvas.querySelector("g.diagram");
@@ -71,8 +83,15 @@ export function renderDiagram(canvas: SVGSVGElement, diagram: Diagram): void {
   canvas.prepend(root);
 }
 
-/** A box: its walls, and its label in the slot the box names. */
-function drawBox(box: Box): SVGGElement {
+/**
+ * A box: its walls, its label in the slot the box names, and the term-dots it
+ * holds — one group per box, so the drawing is grouped the way the diagram is.
+ *
+ * Everything in it is drawn in the diagram's own coordinates, the group carrying
+ * no transform of its own: that a dot's place is relative to its box is the
+ * model's rule, and it is undone in the model, by `placeOf`.
+ */
+function drawBox(box: Box, dots: readonly Dot[]): SVGGElement {
   const group = document.createElementNS(SVG_NS, "g");
   group.classList.add("box");
 
@@ -92,7 +111,22 @@ function drawBox(box: Box): SVGGElement {
   if (label) {
     group.append(label);
   }
+  for (const dot of dots) {
+    group.append(drawDot(box, dot));
+  }
   return group;
+}
+
+/** A term-dot: the `<circle>` standing for a term, where the model puts it. */
+function drawDot(box: Box, dot: Dot): SVGCircleElement {
+  const at = placeOf(box, dot);
+  const mark = document.createElementNS(SVG_NS, "circle");
+  mark.classList.add("term-dot");
+  mark.setAttribute("cx", String(at.x));
+  mark.setAttribute("cy", String(at.y));
+  mark.setAttribute("r", String(DOT_RADIUS));
+  mark.setAttribute("fill", INK);
+  return mark;
 }
 
 /**
@@ -227,15 +261,37 @@ function showProvisionalBox(canvas: SVGSVGElement, extent: Extent): void {
 const PRIMARY_BUTTON = 0;
 
 /**
+ * What a gesture leaves on the canvas while it runs.
+ *
+ * The press settles this along with everything else it settles, and the shell is
+ * what settles it: which mark is being made is the shell's to know, and how much
+ * of it shows before it lands follows from that. All this backend owns is the
+ * drawing of it.
+ */
+type Provisional = "rectangle" | "nothing";
+
+/** What a press starts: a gesture showing one of those, or no gesture at all. */
+export type Started = Provisional | "no-gesture";
+
+/** A gesture in flight: where it began, and what it shows while it runs. */
+interface Running {
+  readonly from: Point;
+  readonly shows: Provisional;
+}
+
+/**
  * Follow a press-drag-release across `canvas`, in diagram units.
  *
- * The press decides whether there is a gesture at all — `starts` is asked where
- * it landed, and says no where the press means something else — and the release
- * decides the rectangle. So no threshold tells a click from a drag: a click is a
- * drag of no size, and what it makes was settled before the pointer moved.
+ * The press decides whether there is a gesture at all and what it shows while it
+ * runs — `starts` is asked where it landed, and answers with nothing where the
+ * press means nothing here — and the release decides where the gesture lands. So
+ * no threshold tells a click from a drag: a click is a drag of no size, and what
+ * it makes was settled before the pointer moved.
  *
- * The rectangle is drawn as the drag goes and left standing where it lands, for
- * `lands` to take down when it is done with it.
+ * `lands` is given both the rectangle the drag swept and the point it was let go
+ * of, a gesture that makes a box wanting the first and one that places a dot the
+ * second. A rectangle it drew is left standing where it lands, for `lands` to
+ * take down when it is done with it.
  *
  * Move and release are watched on the window, ahead of anything on the canvas: a
  * drag has to be followed off the canvas and let go of anywhere, and the release
@@ -244,10 +300,10 @@ const PRIMARY_BUTTON = 0;
  */
 export function enableDragging(
   canvas: SVGSVGElement,
-  starts: (at: Point) => boolean,
-  lands: (drag: Extent) => void,
+  starts: (at: Point) => Started,
+  lands: (drag: Extent, at: Point) => void,
 ): void {
-  let press: Point | undefined;
+  let gesture: Running | undefined;
 
   canvas.addEventListener("pointerdown", (event: PointerEvent) => {
     if (event.button !== PRIMARY_BUTTON) {
@@ -261,33 +317,40 @@ export function enableDragging(
     // ceasing to exist, so the selection runs into the bar and the Export button.
     event.preventDefault();
     const at = toDiagramPoint(canvas, event);
-    if (!starts(at)) {
+    const shows = starts(at);
+    if (shows === "no-gesture") {
       return;
     }
-    press = at;
-    showProvisionalBox(canvas, extentBetween(at, at));
+    gesture = { from: at, shows };
+    showRunning(canvas, gesture, at);
   });
 
   window.addEventListener("pointermove", (event: PointerEvent) => {
-    if (press) {
-      showProvisionalBox(canvas, extentBetween(press, toDiagramPoint(canvas, event)));
-    }
+    showRunning(canvas, gesture, toDiagramPoint(canvas, event));
   });
 
   window.addEventListener(
     "pointerup",
     (event: PointerEvent) => {
-      if (!press || event.button !== PRIMARY_BUTTON) {
+      if (!gesture || event.button !== PRIMARY_BUTTON) {
         return;
       }
       event.stopImmediatePropagation();
-      const drag = extentBetween(press, toDiagramPoint(canvas, event));
-      press = undefined;
-      showProvisionalBox(canvas, drag);
-      lands(drag);
+      const at = toDiagramPoint(canvas, event);
+      const drag = extentBetween(gesture.from, at);
+      showRunning(canvas, gesture, at);
+      gesture = undefined;
+      lands(drag, at);
     },
     { capture: true },
   );
+}
+
+/** How far a gesture has got, for one that shows anything at all. */
+function showRunning(canvas: SVGSVGElement, gesture: Running | undefined, at: Point): void {
+  if (gesture?.shows === "rectangle") {
+    showProvisionalBox(canvas, extentBetween(gesture.from, at));
+  }
 }
 
 /** The rectangle a drag between two points asks for. */

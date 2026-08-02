@@ -3,15 +3,18 @@
 // SPDX-License-Identifier: MIT
 
 // Serializing the canvas to a standalone file. The tests below export real
-// content — dots plopped through `enablePlopping`, a label typeset through the
+// content — a diagram drawn by the render backend, a label typeset through the
 // real MathJax pipeline — because an export is only worth anything if what is
 // on screen survives the trip.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createCanvas, enablePlopping, SVG_NS } from "./canvas";
+import { createCanvas, SVG_NS } from "./canvas";
+import type { Diagram, Point } from "./diagram";
+import { addBox, addDot, EMPTY_DIAGRAM } from "./diagram";
 import { createExportControls, serializeCanvas } from "./export-svg";
 import { createLabelForm } from "./label-form";
+import { renderDiagram } from "./render-svg";
 import type { OutgoingFile } from "./writer";
 import { writeFile } from "./writer";
 
@@ -44,10 +47,25 @@ function sizeCanvas(width: number, height: number): void {
   canvas.getBoundingClientRect = (): DOMRect => new DOMRect(0, 0, width, height);
 }
 
-/** Plop a dot at a canvas point, the way a pointer release does. */
-function plopDotAt(x: number, y: number): void {
-  canvas.dispatchEvent(new PointerEvent("pointerdown", { clientX: x, clientY: y, button: 0 }));
-  canvas.dispatchEvent(new PointerEvent("pointerup", { clientX: x, clientY: y, button: 0 }));
+/**
+ * Draw a box holding a dot at each of `places`.
+ *
+ * Marks reach the canvas the one way any mark does — the backend drawing a
+ * diagram that holds them — so what the export is asked to carry is what the
+ * screen genuinely has on it.
+ */
+function drawDotsAt(...places: readonly Point[]): void {
+  const diagram = places.reduce<Diagram>(
+    (sofar, at) => {
+      const next = addDot(sofar, at);
+      if (typeof next !== "string") {
+        return next;
+      }
+      throw new Error(`the diagram refused a dot at (${String(at.x)}, ${String(at.y)}): ${next}`);
+    },
+    addBox(EMPTY_DIAGRAM, { source: "A", x: 200, y: -120, w: 400, h: 300 }),
+  );
+  renderDiagram(canvas, diagram);
 }
 
 /** Typeset a label onto the canvas through the real form and pipeline. */
@@ -102,7 +120,6 @@ function pathDataOf(root: ParentNode): (string | null)[] {
 
 beforeEach(() => {
   canvas = createCanvas();
-  enablePlopping(canvas);
   controls = createExportControls(canvas);
   button = controls.querySelector("button")!;
   document.body.replaceChildren(canvas, controls);
@@ -154,7 +171,7 @@ describe("pressing Export", () => {
   });
 
   it("hands over the serialized canvas itself", () => {
-    plopDotAt(120, 45);
+    drawDotsAt({ x: 120, y: -45 });
 
     expect(exportOnce().contents).toBe(serializeCanvas(canvas));
   });
@@ -241,14 +258,15 @@ describe("the serialized document", () => {
 
 describe("what the exported file draws", () => {
   it("carries every dot on screen, with the geometry and ink it was drawn in", () => {
-    plopDotAt(120, 45);
-    plopDotAt(300, 200);
+    drawDotsAt({ x: 120, y: -45 }, { x: 300, y: -200 });
 
     const dots = [...reopenExport().querySelectorAll("circle")];
     expect(dots).toHaveLength(2);
+    // The diagram's own coordinates, y up, under the one flip at the drawing's
+    // root — which travels with the file, so the export is 1:1 with the screen.
     expect(dots.map((dot) => [dot.getAttribute("cx"), dot.getAttribute("cy")])).toEqual([
-      ["120", "45"],
-      ["300", "200"],
+      ["120", "-45"],
+      ["300", "-200"],
     ]);
     expect(Number(dots[0]?.getAttribute("r"))).toBeGreaterThan(0);
     expect(dots[0]?.getAttribute("fill")).toBeTruthy();
@@ -273,7 +291,7 @@ describe("what the exported file draws", () => {
   });
 
   it("draws dots and label together — the whole canvas, not one kind of mark", async () => {
-    plopDotAt(400, 400);
+    drawDotsAt({ x: 300, y: -200 });
     await placeLabel(LATEX);
 
     const exported = reopenExport();
@@ -293,7 +311,7 @@ describe("what the exported file needs from outside", () => {
   });
 
   it("holds no element that reaches for something else", async () => {
-    plopDotAt(120, 45);
+    drawDotsAt({ x: 120, y: -45 });
     await placeLabel(LATEX);
 
     const exported = reopenExport();

@@ -8,8 +8,8 @@
 // because the diagram holds it, and a gesture that changes the drawing does so
 // by making the next diagram, never by appending to the canvas.
 
-import type { Diagram, Extent } from "./diagram";
-import { addBox, boxAt, EMPTY_DIAGRAM } from "./diagram";
+import type { Diagram, Extent, Point, Refusal } from "./diagram";
+import { addBox, addDot, boxAt, EMPTY_DIAGRAM } from "./diagram";
 import { messageOf } from "./failure";
 import { askForSource, clearSource } from "./label-form";
 import { clearChrome, enableDragging, measureBox, renderDiagram, toPagePoint } from "./render-svg";
@@ -35,33 +35,80 @@ export function createEditor(canvas: SVGSVGElement, form: HTMLFormElement): HTML
   refusal.setAttribute("role", "alert");
 
   editor.append(canvas, refusal);
-  enableBoxMaking(canvas, form, refusal);
+  enableDrawing(canvas, form, refusal);
   return editor;
 }
 
 /**
- * Make a drag on empty canvas draw a box, and hold the diagram it goes into.
+ * What a refused gesture says, one wording per reason the model gives.
  *
- * The press decides what is being made: empty canvas is a box, and inside a box
- * is a term-dot, which the model does not hold yet and which nothing here
- * claims. Only the diagram can say which of the two a press landed on, and it
- * says so from the extents it holds rather than from anything drawn.
+ * The model hands back a reason and no sentence: how a refusal is put is of a
+ * piece with the region it is put into, and both are the shell's.
  */
-function enableBoxMaking(
+const REFUSALS: Record<Refusal, string> = {
+  "outside-every-box":
+    "A term-dot goes inside a box — a term outside a type is nothing a diagram can hold.",
+  "too-close-to-a-dot":
+    "Term-dots stand apart — that release is too close to a dot already placed.",
+};
+
+/**
+ * The diagram a plop leaves, or the one handed in where the model would not have
+ * the dot — which the region is told, a refusal that says nothing being
+ * indistinguishable from a gesture that broke.
+ *
+ * No question and nothing to await: a dot is placed before it is named, so the
+ * whole of that gesture is this one transition.
+ */
+function plopped(diagram: Diagram, at: Point, refusal: HTMLParagraphElement): Diagram {
+  const next = addDot(diagram, at);
+  if (typeof next === "string") {
+    refusal.textContent = REFUSALS[next];
+    return diagram;
+  }
+  refusal.textContent = "";
+  return next;
+}
+
+/**
+ * Make a gesture on the canvas draw, and hold the diagram it draws into.
+ *
+ * The press decides which mark is being made — empty canvas is a box, inside a
+ * box is a term-dot — and the release decides only where it lands. Only the
+ * diagram can say which of the two a press landed on, and it says so from the
+ * extents it holds rather than from anything drawn. What the press settled on is
+ * kept in `making` until the release places it.
+ *
+ * A press while a question is open starts nothing: one input holds one question,
+ * and a press that quietly cancelled it would throw away a typed source.
+ */
+function enableDrawing(
   canvas: SVGSVGElement,
   form: HTMLFormElement,
   refusal: HTMLParagraphElement,
 ): void {
   let current = EMPTY_DIAGRAM;
-  // One question at a time: the input is already at a rectangle, and a second
-  // press would leave the first with nothing to answer it.
   let naming = false;
+  let making: "box" | "dot" = "box";
   renderDiagram(canvas, current);
 
   enableDragging(
     canvas,
-    (at) => !naming && !boxAt(current, at),
-    (drag) => {
+    (at) => {
+      if (naming) {
+        return "no-gesture";
+      }
+      making = boxAt(current, at) ? "dot" : "box";
+      // A dot has no extent to show: a rectangle following the pointer would
+      // say a box was coming.
+      return making === "box" ? "rectangle" : "nothing";
+    },
+    (drag, at) => {
+      if (making === "dot") {
+        current = plopped(current, at, refusal);
+        renderDiagram(canvas, current);
+        return;
+      }
       naming = true;
       void nameIt(drag);
     },

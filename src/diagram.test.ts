@@ -10,8 +10,18 @@
 
 import { describe, expect, it } from "vitest";
 
-import type { Arrow, Box, Diagram, Dot, Equivalence, NewBox, Path } from "./diagram";
-import { addBox, boxAt, BOX_CLEARANCE, EMPTY_DIAGRAM, takeId } from "./diagram";
+import type { Arrow, Box, Diagram, Dot, Equivalence, NewBox, Path, Point } from "./diagram";
+import {
+  addBox,
+  addDot,
+  boxAt,
+  BOX_CLEARANCE,
+  DOT_SEPARATION,
+  dotsIn,
+  EMPTY_DIAGRAM,
+  placeOf,
+  takeId,
+} from "./diagram";
 
 // One counter, spent in creation order across all five sorts, exactly as a
 // drawing would spend it — so the ids below are 1…9 without being written down.
@@ -365,5 +375,61 @@ describe("what a point lands inside", () => {
   it("is measured against the extent the box carries, wall included", () => {
     expect(boxAt(pair, { x: 10, y: 10 })?.id).toBe(1);
     expect(boxAt(pair, { x: 10.5, y: 0 })).toBeUndefined();
+  });
+});
+
+// Where a dot may go is geometry like the rest of it, and asked of the model
+// directly: what the release lands in, and how far it is from what is already
+// down. The rule was once measured in whatever the renderer had drawn, which is
+// why reaching it took a document and a faked layout.
+
+/** A box roomy enough for every dot placed below. */
+const ROOM = square(0, 0, 60);
+
+/** The diagram a landed release leaves, or a failure saying it was refused. */
+function plopped(diagram: Diagram, at: Point): Diagram {
+  const next = addDot(diagram, at);
+  if (typeof next !== "string") {
+    return next;
+  }
+  throw new Error(`a dot at (${String(at.x)}, ${String(at.y)}) was refused: ${next}`);
+}
+
+describe("placing a term-dot", () => {
+  it("puts one in the box the release landed in, off the shared counter", () => {
+    const next = plopped(drawn(ROOM), { x: 10, y: -5 });
+
+    expect(next.dots).toEqual([{ id: 2, box: 1, x: 10, y: -5 }]);
+  });
+
+  it("holds that place relative to its box, which then carries it with nothing to maintain", () => {
+    const withDot = plopped(drawn(ROOM), { x: 10, y: -5 });
+
+    const pushed = addBox(withDot, square(35, 0, 60));
+    const [box] = pushed.boxes;
+
+    // The box slid 37 to the left; the dot is written down as it always was,
+    // and stands 37 further left for it.
+    expect(box && dotsIn(pushed, box)).toEqual(withDot.dots);
+    expect(box && dotsIn(pushed, box).map((dot) => placeOf(box, dot))).toEqual([{ x: -27, y: -5 }]);
+  });
+});
+
+describe("a release the diagram refuses", () => {
+  it("is one outside every box: a term outside a type is nothing to hold", () => {
+    expect(addDot(drawn(ROOM), { x: 100, y: 100 })).toBe("outside-every-box");
+    expect(addDot(EMPTY_DIAGRAM, { x: 0, y: 0 })).toBe("outside-every-box");
+  });
+
+  it("is one closer to any dot down than the diagram lets two dots stand", () => {
+    const two = plopped(plopped(drawn(ROOM), { x: -20, y: 0 }), { x: 20, y: 0 });
+    const before = structuredClone(two);
+
+    expect(addDot(two, { x: 20, y: 0 })).toBe("too-close-to-a-dot");
+    expect(addDot(two, { x: DOT_SEPARATION - 21, y: 0 })).toBe("too-close-to-a-dot");
+    // Exactly a separation away is what the number means, so that one lands.
+    expect(plopped(two, { x: DOT_SEPARATION - 20, y: 0 }).dots).toHaveLength(3);
+    // And what was refused was not half-applied on the way out.
+    expect(two).toEqual(before);
   });
 });

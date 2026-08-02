@@ -10,7 +10,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createCanvas, enablePlopping } from "./canvas";
+import { createCanvas } from "./canvas";
 import { createEditor } from "./editor";
 import { createLabelForm } from "./label-form";
 
@@ -19,6 +19,14 @@ let form: HTMLFormElement;
 
 function boxesOn(): SVGRectElement[] {
   return [...canvas.querySelectorAll<SVGRectElement>("g.diagram g.box > rect")];
+}
+
+function dotsOn(): SVGCircleElement[] {
+  return [...canvas.querySelectorAll<SVGCircleElement>("g.diagram circle.term-dot")];
+}
+
+function centresOf(): (string | null)[][] {
+  return dotsOn().map((dot) => [dot.getAttribute("cx"), dot.getAttribute("cy")]);
 }
 
 function extentOf(rect: SVGRectElement | undefined): number[] {
@@ -88,7 +96,6 @@ function refusalText(): string {
 
 beforeEach(() => {
   canvas = createCanvas();
-  enablePlopping(canvas);
   form = createLabelForm(canvas);
   document.body.replaceChildren(createEditor(canvas, form), form);
 });
@@ -263,25 +270,74 @@ describe("a press inside a box", () => {
     pointer("pointerup", 150, 120);
     expect(boxesOn()).toHaveLength(1);
   });
+
+  it("places a term-dot, at the release point rather than the press point", async () => {
+    await makeBox([40, 40], [240, 140]);
+
+    dragOut(100, 100, 150, 120);
+
+    expect(centresOf()).toEqual([["150", "-120"]]);
+  });
+
+  it("puts it in the diagram, so it is redrawn along with everything else", async () => {
+    await makeBox([40, 40], [240, 140]);
+    dragOut(100, 100, 100, 100);
+
+    await makeBox([400, 400], [500, 500], "B");
+
+    expect(centresOf()).toEqual([["100", "-100"]]);
+    expect(boxesOn()).toHaveLength(2);
+  });
+});
+
+describe("a release with nowhere to put a dot", () => {
+  it("places none outside every box, and says so in the canvas's own region", async () => {
+    await makeBox([40, 40], [240, 140]);
+
+    dragOut(100, 100, 500, 500);
+
+    expect(dotsOn()).toHaveLength(0);
+    expect(refusalText()).toMatch(/inside a box/iu);
+  });
+
+  it("places none on a dot already down, whether released onto it or dragged onto it", async () => {
+    await makeBox([40, 40], [240, 140]);
+    dragOut(100, 100, 100, 100);
+
+    dragOut(100, 100, 100, 100);
+    expect(dotsOn()).toHaveLength(1);
+
+    dragOut(200, 120, 103, 102);
+    expect(dotsOn()).toHaveLength(1);
+    expect(refusalText()).toMatch(/too close/iu);
+  });
+
+  it("is forgotten as soon as a dot lands", async () => {
+    await makeBox([40, 40], [240, 140]);
+    dragOut(100, 100, 500, 500);
+    expect(refusalText()).toBeTruthy();
+
+    dragOut(100, 100, 150, 120);
+
+    expect(dotsOn()).toHaveLength(1);
+    expect(refusalText()).toBe("");
+  });
 });
 
 describe("what the canvas holds besides the diagram", () => {
   it("gains no term-dot from a gesture that made a box", async () => {
     await makeBox([40, 40], [240, 140]);
 
-    expect(canvas.querySelectorAll("circle.term-dot")).toHaveLength(0);
+    expect(dotsOn()).toHaveLength(0);
   });
 
-  it("keeps term-dots and typeset labels through a redraw", async () => {
+  it("keeps the typeset labels it holds for other reasons through a redraw", async () => {
     await makeBox([40, 40], [240, 140]);
-    pointer("pointerdown", 100, 100);
-    pointer("pointerup", 100, 100);
     submit("P(x)");
     await vi.waitFor(() => expect(canvas.querySelectorAll("g.math-label")).toHaveLength(1));
 
     await makeBox([400, 400], [500, 500], "B");
 
-    expect(canvas.querySelectorAll("circle.term-dot")).toHaveLength(1);
     expect(canvas.querySelectorAll("g.math-label")).toHaveLength(1);
     expect(boxesOn()).toHaveLength(2);
   });

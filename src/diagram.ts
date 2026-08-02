@@ -458,3 +458,94 @@ function displace(pusher: Box, other: Box, grower: Box): Box | undefined {
 function awayFrom(box: number, pusher: number, grower: number): number {
   return Math.sign(box - pusher) || Math.sign(box - grower) || 1;
 }
+
+/**
+ * Why a transition would not make the next diagram.
+ *
+ * A reason, and not a sentence: what the user is told is wording, which belongs
+ * where the rest of the wording is. Each arm names a rule of the model, so a
+ * shell that grows a second way of reporting one still has only these to answer
+ * for.
+ */
+export type Refusal = "outside-every-box" | "too-close-to-a-dot";
+
+/**
+ * The next diagram, or the reason there is none.
+ *
+ * Told apart by `typeof`: a refusal is a bare reason, so it needs no wrapper and
+ * a diagram needs no unwrapping in the arm that matters. A transition that
+ * cannot refuse returns a {@link Diagram} instead, rather than an arm no caller
+ * could reach.
+ *
+ * Not exported: a caller reads the arm it got rather than naming the union, and
+ * {@link Refusal} is the half a shell has to answer for.
+ */
+type Next = Diagram | Refusal;
+
+/**
+ * The least a diagram lets two term-dots stand apart, in diagram units.
+ *
+ * The rule is the diagram's rather than the drawing's: two dots that are this
+ * far apart are two dots however small or large a backend draws them, where a
+ * rule measured in ink would say something different on every backend. Each
+ * backend then draws a dot small enough that two of them this far apart stay
+ * clear, which is the whole of what it owes this number.
+ *
+ * A placeholder, like {@link BOX_CLEARANCE}, until a drawing argues for another.
+ */
+export const DOT_SEPARATION = 10;
+
+/**
+ * Where a dot stands, its own place being relative to its box's centre.
+ *
+ * The one place that offset is undone, so "a box carries its dots" costs the
+ * box nothing: it moves, and every dot in it has moved.
+ */
+export function placeOf(box: Box, dot: Dot): Point {
+  return { x: box.x + dot.x, y: box.y + dot.y };
+}
+
+/**
+ * The dots a box holds.
+ *
+ * Membership is written on the dot and nowhere else, so it is read back here
+ * and nowhere else.
+ */
+export function dotsIn(diagram: Diagram, box: Box): readonly Dot[] {
+  return diagram.dots.filter((dot) => dot.box === box.id);
+}
+
+/**
+ * Put a term-dot where a release landed, and the diagram that has it — or the
+ * reason it is refused.
+ *
+ * The release point decides everything: which box the dot goes in, and whether
+ * it is far enough from the dots already drawn. A press that started somewhere
+ * else is not consulted, so a press dragged onto a dot is refused exactly as a
+ * release straight onto one is.
+ *
+ * Separation is measured against every dot in the diagram rather than against
+ * the box's own, because two dots a hair apart read as one mark whichever boxes
+ * they are in. That no pair in different boxes can currently be that close —
+ * a {@link BOX_CLEARANCE} keeps their walls further apart than that — is a fact
+ * about two numbers rather than a rule, and not one to build the rule on.
+ */
+export function addDot(diagram: Diagram, at: Point): Next {
+  const box = boxAt(diagram, at);
+  if (!box) {
+    return "outside-every-box";
+  }
+  if (
+    placesOf(diagram).some((place) => Math.hypot(place.x - at.x, place.y - at.y) < DOT_SEPARATION)
+  ) {
+    return "too-close-to-a-dot";
+  }
+  const [id, spent] = takeId(diagram, "dot");
+  const placed: Dot = { id, box: box.id, x: at.x - box.x, y: at.y - box.y };
+  return { ...spent, dots: [...spent.dots, placed] };
+}
+
+/** Where every dot in the diagram stands. */
+function placesOf(diagram: Diagram): readonly Point[] {
+  return diagram.boxes.flatMap((box) => dotsIn(diagram, box).map((dot) => placeOf(box, dot)));
+}

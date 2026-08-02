@@ -18,10 +18,9 @@ const SVG_MEDIA_TYPE = "image/svg+xml;charset=utf-8";
  * The live canvas is sized by CSS and carries no `width`, `height` or
  * `viewBox`, so serializing it as-is would give a document with no dimensions
  * at all — legal XML that renders as nothing. The three are added here, taken
- * from the canvas's rendered box: dots are already placed in coordinates
- * relative to that box (see `enablePlopping`), so `0 0 width height` is exactly
- * the frame the whole diagram is drawn in and the export is 1:1 with the
- * screen.
+ * from the canvas's rendered box: the render backend draws from that box's own
+ * corner (see `render-svg.ts`), so `0 0 width height` is exactly the frame the
+ * whole diagram is drawn in and the export is 1:1 with the screen.
  *
  * Everything the marks need to render travels with them — glyphs are inline
  * `<path>` geometry and colours are presentation attributes — so the result

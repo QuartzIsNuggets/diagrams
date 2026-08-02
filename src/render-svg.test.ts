@@ -11,7 +11,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createCanvas, SVG_NS } from "./canvas";
 import type { Diagram, Extent, Point } from "./diagram";
-import { addBox, EMPTY_DIAGRAM } from "./diagram";
+import { addBox, addDot, DOT_SEPARATION, EMPTY_DIAGRAM } from "./diagram";
+import type { Started } from "./render-svg";
 import { clearChrome, enableDragging, measureBox, renderDiagram, toPagePoint } from "./render-svg";
 
 let canvas: SVGSVGElement;
@@ -52,9 +53,24 @@ function cornerOf(rect: Element | null | undefined): (string | null)[] {
   return ["x", "y", "width", "height"].map((name) => rect?.getAttribute(name) ?? null);
 }
 
+function drawnDots(): SVGCircleElement[] {
+  return [...canvas.querySelectorAll<SVGCircleElement>("g.diagram circle.term-dot")];
+}
+
 /** A diagram holding one box, the way a landed gesture would have left it. */
 function withBox(extent: Extent, source = "A"): Diagram {
   return addBox(EMPTY_DIAGRAM, { source, ...extent });
+}
+
+/** That box, with a dot at each of `places` — a gesture per dot. */
+function withDots(extent: Extent, ...places: readonly Point[]): Diagram {
+  return places.reduce<Diagram>((sofar, at) => {
+    const next = addDot(sofar, at);
+    if (typeof next !== "string") {
+      return next;
+    }
+    throw new Error(`the diagram refused a dot: ${next}`);
+  }, withBox(extent));
 }
 
 /**
@@ -69,7 +85,7 @@ function withBox(extent: Extent, source = "A"): Diagram {
  * suite wires one per test and a drag left half-finished claims the *next*
  * test's release.
  */
-function draggingLands(starts: (at: Point) => boolean = () => true): Extent[] {
+function draggingLands(starts: (at: Point) => Started = () => "rectangle"): Extent[] {
   const landed: Extent[] = [];
   enableDragging(canvas, starts, (drag) => landed.push(drag));
   return landed;
@@ -218,6 +234,30 @@ describe("a box's label", () => {
   });
 });
 
+describe("a term-dot", () => {
+  it("is drawn where the diagram puts it, its place being relative to its box", () => {
+    renderDiagram(canvas, withDots({ x: 100, y: -60, w: 80, h: 40 }, { x: 120, y: -50 }));
+
+    const [dot] = drawnDots();
+    expect([dot?.getAttribute("cx"), dot?.getAttribute("cy")]).toEqual(["120", "-50"]);
+    expect(dot?.getAttribute("fill")).toBeTruthy();
+  });
+
+  it("is drawn in its box's group, so the drawing groups what the diagram groups", () => {
+    renderDiagram(canvas, withDots({ x: 0, y: 0, w: 80, h: 40 }, { x: 10, y: 10 }));
+
+    expect(drawnDots()[0]?.closest("g.box")).not.toBeNull();
+  });
+
+  it("is small enough that two the model calls clear of each other are", () => {
+    renderDiagram(canvas, withDots({ x: 0, y: 0, w: 80, h: 40 }, { x: 0, y: 0 }));
+
+    // The model owns how far apart two dots stand and names no size; this is
+    // the whole of what a backend owes that number.
+    expect(2 * Number(drawnDots()[0]?.getAttribute("r"))).toBeLessThanOrEqual(DOT_SEPARATION);
+  });
+});
+
 describe("the extent a source needs", () => {
   it("is bigger than the run, the label being given room inside the walls", async () => {
     const small = await measureBox("x");
@@ -265,6 +305,39 @@ describe("the rectangle a press-drag-release hands on", () => {
   });
 });
 
+describe("a gesture that shows nothing while it runs", () => {
+  /** Wire the canvas for a gesture drawing no chrome, and collect where it lands. */
+  function releasesAt(): Point[] {
+    const landed: Point[] = [];
+    enableDragging(
+      canvas,
+      () => "nothing",
+      (_drag, at) => landed.push(at),
+    );
+    return landed;
+  }
+
+  it("draws no rectangle, which would say a box was coming", () => {
+    releasesAt();
+
+    pressAt(40, 40);
+    moveTo(140, 90);
+
+    expect(canvas.querySelector("g.chrome")).toBeNull();
+    releaseAt(140, 90);
+    expect(canvas.querySelector("g.chrome")).toBeNull();
+  });
+
+  it("still hands on where it was let go of, which is all a dot needs", () => {
+    const landed = releasesAt();
+
+    pressAt(40, 40);
+    releaseAt(140, 90);
+
+    expect(landed).toEqual([{ x: 140, y: -90 }]);
+  });
+});
+
 describe("what never lands a rectangle", () => {
   it("a press on its own, however far it is dragged", () => {
     const landed = draggingLands();
@@ -289,7 +362,7 @@ describe("what never lands a rectangle", () => {
   });
 
   it("a press the diagram does not allow one to start from", () => {
-    const landed = draggingLands(() => false);
+    const landed = draggingLands(() => "no-gesture");
 
     pressAt(40, 40);
     releaseAt(90, 90);
@@ -304,7 +377,7 @@ describe("who a release belongs to", () => {
 
   beforeEach(() => {
     other = vi.fn();
-    enableDragging(canvas, () => true, vi.fn());
+    enableDragging(canvas, () => "rectangle", vi.fn());
     canvas.addEventListener("pointerup", other);
   });
 
