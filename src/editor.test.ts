@@ -97,10 +97,16 @@ async function makeBox(
   return boxesOn();
 }
 
-/** Give up on whatever the bar is asking, and wait for it back in its corner. */
+/** Give up on whatever the bar is asking, and wait for the gesture to be over. */
 async function giveUp(): Promise<void> {
   press("Escape");
   await vi.waitFor(() => expect(bar.classList.contains("asking")).toBe(false));
+  // The bar closes as Escape is read; the gesture it was asking for ends a turn
+  // later, when the naming it was waiting on comes back. A test that goes on to
+  // make the next mark has to be past that — one question is open at a time.
+  await new Promise((resume) => {
+    setTimeout(resume, 0);
+  });
 }
 
 /**
@@ -118,6 +124,20 @@ async function plopDot(x: number, y: number, source = "x"): Promise<void> {
 
 function refusalText(): string {
   return document.querySelector(".canvas-error")?.textContent ?? "";
+}
+
+/** What the bar says of the source it is holding: the other of the two regions. */
+function barReason(): string {
+  return bar.querySelector(".naming-error")?.textContent ?? "";
+}
+
+/** A source no backend will set, whatever mark is being named with it. */
+const BAD = "\\notacontrolsequence{x}";
+
+/** Name whatever is being asked about with {@link BAD}, and wait for the bar to say so. */
+async function refuseSource(): Promise<void> {
+  submit(BAD);
+  await vi.waitFor(() => expect(barReason()).toMatch(/undefined control sequence/iu));
 }
 
 beforeEach(() => {
@@ -159,9 +179,12 @@ describe("a drag on empty canvas", () => {
 
     expect(bar.classList.contains("asking")).toBe(true);
     // The middle of the bar's bottom edge sits on the middle of the rectangle's
-    // top edge — (90, 40) in page coordinates — so its corner is half a width
-    // left of that and a whole height above it.
-    expect([bar.style.left, bar.style.top]).toEqual(["-10px", "10px"]);
+    // top edge — (90, 40) in page coordinates — so the bar hangs half a width
+    // left of that, and that far up from the foot of the window.
+    expect([bar.style.left, bar.style.bottom]).toEqual([
+      "-10px",
+      `${String(window.innerHeight - 40)}px`,
+    ]);
   });
 
   it("puts no box on the canvas until a source comes back", () => {
@@ -223,40 +246,64 @@ describe("a box needing room another holds", () => {
   });
 });
 
-describe("a source that will not typeset", () => {
-  const BAD = "\\notacontrolsequence{x}";
-
-  it("makes no box, and the rectangle goes with it", async () => {
+describe("a box's source that will not typeset", () => {
+  it("makes no box, and keeps the bar open at the rectangle it is about", async () => {
     dragOut(40, 40, 240, 140);
-    submit(BAD);
 
-    await vi.waitFor(() => expect(refusalText()).toMatch(/undefined control sequence/iu));
+    await refuseSource();
+
     expect(boxesOn()).toHaveLength(0);
-    expect(canvas.querySelector("g.chrome")).toBeNull();
+    expect(bar.classList.contains("asking")).toBe(true);
+    expect(canvas.querySelector("g.chrome > rect")).not.toBeNull();
   });
 
   it("keeps the source in the input to be corrected", async () => {
     dragOut(40, 40, 240, 140);
-    submit(BAD);
 
-    await vi.waitFor(() => expect(refusalText()).toBeTruthy());
+    await refuseSource();
+
     expect(bar.querySelector("input")?.value).toBe(BAD);
   });
 
-  it("is forgotten as soon as a box lands", async () => {
+  it("is answered at the mark and not in the canvas's own region", async () => {
     dragOut(40, 40, 240, 140);
-    submit(BAD);
-    await vi.waitFor(() => expect(refusalText()).toBeTruthy());
 
-    await makeBox([300, 300], [400, 400]);
+    await refuseSource();
 
     expect(refusalText()).toBe("");
+    expect(barReason()).not.toContain(BAD);
+  });
+});
+
+describe("correcting a box's source", () => {
+  it("makes the box, the drag having waited for a source that sets", async () => {
+    dragOut(40, 40, 240, 140);
+    await refuseSource();
+
+    submit("A");
+
+    await vi.waitFor(() => expect(boxesOn()).toHaveLength(1));
+    expect(extentOf(boxesOn()[0])).toEqual([40, -140, 200, 100]);
+    expect(barReason()).toBe("");
+    expect(canvas.querySelector("g.chrome")).toBeNull();
   });
 
-  it("does not stop the box that follows it", async () => {
+  it("is given up on with Escape, leaving no box and nothing typed", async () => {
     dragOut(40, 40, 240, 140);
-    submit(BAD);
-    await vi.waitFor(() => expect(refusalText()).toBeTruthy());
+    await refuseSource();
+
+    await giveUp();
+
+    expect(boxesOn()).toHaveLength(0);
+    expect(bar.querySelector("input")?.value).toBe("");
+    expect(barReason()).toBe("");
+    expect(canvas.querySelector("g.chrome")).toBeNull();
+  });
+
+  it("stops nothing once it is over: the next box lands as any other", async () => {
+    dragOut(40, 40, 240, 140);
+    await refuseSource();
+    await giveUp();
 
     const [box] = await makeBox([300, 300], [400, 400]);
 
@@ -361,40 +408,65 @@ describe("naming a term-dot", () => {
 });
 
 describe("a dot's source that will not typeset", () => {
-  it("is kept out of the diagram and left in the input", async () => {
-    const bad = "\\notacontrolsequence{x}";
+  it("is kept out of the diagram and left in the input, the bar still asking", async () => {
     await makeBox([40, 40], [240, 140]);
-
     dragOut(100, 100, 100, 100);
-    submit(bad);
 
-    await vi.waitFor(() => expect(refusalText()).toMatch(/undefined control sequence/iu));
+    await refuseSource();
+
     expect(dotsOn()).toHaveLength(1);
     expect(dotLabelsOn()).toHaveLength(0);
-    expect(bar.querySelector("input")?.value).toBe(bad);
-  });
-
-  it("does not stop the dot that follows it", async () => {
-    await makeBox([40, 40], [240, 140]);
-    dragOut(100, 100, 100, 100);
-    submit("\\notacontrolsequence{x}");
-    await vi.waitFor(() => expect(refusalText()).toBeTruthy());
-
-    await plopDot(200, 120, "y");
-
-    expect(dotLabelsOn()).toHaveLength(1);
+    expect(bar.querySelector("input")?.value).toBe(BAD);
+    expect(bar.classList.contains("asking")).toBe(true);
     expect(refusalText()).toBe("");
   });
 
-  it("starts no second gesture while the question is open", async () => {
+  it("starts no second gesture while the question is still open", async () => {
     await makeBox([40, 40], [240, 140]);
     dragOut(100, 100, 100, 100);
+    await refuseSource();
 
     dragOut(400, 400, 500, 500);
 
     expect(boxesOn()).toHaveLength(1);
     expect(canvas.querySelector("g.chrome")).toBeNull();
     await giveUp();
+  });
+});
+
+describe("correcting a dot's source", () => {
+  it("names the dot the correction sets", async () => {
+    await makeBox([40, 40], [240, 140]);
+    dragOut(100, 100, 100, 100);
+    await refuseSource();
+
+    submit("x");
+
+    await vi.waitFor(() => expect(dotLabelsOn()).toHaveLength(1));
+    expect(barReason()).toBe("");
+  });
+
+  it("leaves the dot unnamed where it is given up on instead", async () => {
+    await makeBox([40, 40], [240, 140]);
+    dragOut(100, 100, 100, 100);
+    await refuseSource();
+
+    await giveUp();
+
+    expect(dotsOn()).toHaveLength(1);
+    expect(dotLabelsOn()).toHaveLength(0);
+  });
+
+  it("stops nothing once it is over: the next dot lands as any other", async () => {
+    await makeBox([40, 40], [240, 140]);
+    dragOut(100, 100, 100, 100);
+    await refuseSource();
+    await giveUp();
+
+    await plopDot(200, 120, "y");
+
+    expect(dotLabelsOn()).toHaveLength(1);
+    expect(refusalText()).toBe("");
   });
 });
 

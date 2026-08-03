@@ -49,23 +49,24 @@ body {
     sans-serif;
 }
 
+/* The line a refused source is explained on, then the input and its button —
+   two rows reached by wrapping rather than by a row of its own, the bar having
+   nothing on the first the rest of the time. The bar hangs by its bottom edge
+   throughout, in its corner and at a mark alike, so that line arriving lifts the
+   input rather than pushing it down over what it is asking about: while a
+   gesture is naming something the bar leaves its corner for the label slot of
+   the mark it names, which naming-bar.ts sets as an inline `left`/`bottom`. */
 .naming-bar {
   left: 16px;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }
 
-/* The one input, unpinned: while a gesture is naming something it leaves its
-   corner for the label slot of the mark it names, which the shell sets as an
-   inline `left`/`top` — already offset for the bar's own extent, so that it
-   stands centred above the point rather than being translated onto it. A
-   transform would be the shorter way to say that and cannot be used: it makes a
-   fixed element a composited layer, and the layer lands on the fractional
-   offset half a `ch`-derived width comes to, which WebKit resamples into a
-   blur. */
-.naming-bar.asking {
-  bottom: auto;
+.naming-error {
+  flex-basis: 100%;
+  max-width: 40ch;
 }
 
 /* A column pinned by its bottom-right corner: a message appearing above the
@@ -104,12 +105,19 @@ body {
   background: #f4f4f4;
 }
 
-/* Empty until something is refused — a gesture, a write — so they take no room
-   the rest of the time. */
+/* Empty until something is refused — a gesture, a source, a write — so they take
+   no room the rest of the time. The bar's has to say so outright: an empty flex
+   item still claims a line, and the bar is placed by the height it has while
+   asking. */
 .canvas-error,
-.export-error {
+.export-error,
+.naming-error {
   margin: 0;
   color: #b00020;
+}
+
+.naming-error:empty {
+  display: none;
 }
 
 /* A filesystem refusal names a path and can run long. Wrapping it keeps the

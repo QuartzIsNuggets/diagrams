@@ -10,8 +10,7 @@
 
 import type { Diagram, DotId, Extent, Point, Refusal } from "./diagram";
 import { addBox, addDot, boxAt, EMPTY_DIAGRAM, labelDot } from "./diagram";
-import { messageOf } from "./failure";
-import { askForSource, clearSource } from "./naming-bar";
+import { askForSource } from "./naming-bar";
 import type { Unset } from "./render-svg";
 import {
   clearChrome,
@@ -54,7 +53,8 @@ export function createEditor(canvas: SVGSVGElement, bar: HTMLFormElement): Edito
 
   // In the tree before it has anything to say, so a refusal is announced rather
   // than appearing from nowhere. One region, not one per gesture: "why did
-  // nothing appear?" is one question.
+  // nothing appear?" is one question — and not the naming bar's question, which
+  // is why a source that will not set is refused at the mark instead.
   const refusal = document.createElement("p");
   refusal.classList.add("canvas-error");
   refusal.setAttribute("role", "alert");
@@ -136,24 +136,21 @@ async function settle(shell: Shell): Promise<void> {
 /**
  * Run a naming out, and draw whatever it settles on.
  *
- * The one place a gesture ends, whichever mark it was making. A source that
- * will not typeset rejects, and that is the only thing either naming reports:
- * a message stands for the last attempt, so anything that is not a refusal — a
- * mark named, a question given up on — empties the region instead.
+ * The one place a gesture ends, whichever mark it was making. Nothing is
+ * reported here: a naming ends on a mark named or a question given up on, and
+ * neither is a refusal — the source that would have been one never got past the
+ * bar. So the region is emptied either way, a message standing for the last
+ * attempt and this being it.
  */
 async function named(shell: Shell, naming: Promise<Diagram>): Promise<void> {
-  try {
-    shell.current = await naming;
-    draw(shell);
-    shell.refusal.textContent = "";
-  } catch (failure: unknown) {
-    shell.refusal.textContent = messageOf(failure);
-  } finally {
-    // However it went, the gesture is over: any rectangle it drew goes, and the
-    // next press is free to start another.
-    clearChrome(shell.canvas);
-    shell.naming = false;
-  }
+  shell.current = await naming;
+  draw(shell);
+  shell.refusal.textContent = "";
+  // The gesture is over: any rectangle it drew goes, and the next press is free
+  // to start another. Not before — a rectangle is the mark its question is
+  // about, so it stands as long as the bar is still asking about it.
+  clearChrome(shell.canvas);
+  shell.naming = false;
 }
 
 /**
@@ -225,29 +222,28 @@ function enableDrawing(
  * Ask for the box's type expression, and hand back the diagram that has the
  * box — or the one handed in, where the question was given up on.
  *
- * The rectangle stays up while the question is open: it is what the question is
- * about, which is why the input goes to it rather than a modal covering it. A
- * source that will not typeset rejects, so nothing is added and the source stays
- * in the input to be corrected.
+ * The rectangle stays up for as long as the bar does: it is what the question is
+ * about, which is why the input goes to it rather than a modal covering it, and
+ * a source being corrected is still that question. Measuring the box is what
+ * vets its source — a floor is what the drawing needs anyway, and a source that
+ * has none is a source this backend will not set — so the bar keeps asking until
+ * one comes back and nothing unmeasurable ever reaches a box.
  */
 async function boxFrom(shell: Shell, drag: Extent): Promise<Diagram> {
   // At the label slot a new box takes, so a source is typed where the label it
   // becomes will be.
   const slot = toPagePoint(shell.canvas, { x: drag.x, y: drag.y + drag.h / 2 });
-  const source = await askForSource(shell.bar, slot);
-  if (!source) {
-    return shell.current;
-  }
-
-  const floor = await measureBox(source);
-  clearSource(shell.bar);
-  return addBox(shell.current, {
-    source,
-    x: drag.x,
-    y: drag.y,
-    w: Math.max(drag.w, floor.w),
-    h: Math.max(drag.h, floor.h),
+  const box = await askForSource(shell.bar, slot, async (source) => {
+    const floor = await measureBox(source);
+    return {
+      source,
+      x: drag.x,
+      y: drag.y,
+      w: Math.max(drag.w, floor.w),
+      h: Math.max(drag.h, floor.h),
+    };
   });
+  return box ? addBox(shell.current, box) : shell.current;
 }
 
 /**
@@ -256,16 +252,14 @@ async function boxFrom(shell: Shell, drag: Extent): Promise<Diagram> {
  *
  * The bar goes to the dot itself rather than to where the glyphs will land: the
  * dot is the mark the question is about, and how far off it a label stands is
- * the backend's own. A source that will not typeset rejects, so the dot keeps
- * no name and the source stays in the input to be corrected.
+ * the backend's own. A dot has no extent to floor, so the source is vetted for
+ * its own sake and the bar keeps asking until one sets — the dot standing
+ * unnamed meanwhile, which it may do for good if the question is given up on.
  */
 async function dotNamed(shell: Shell, dot: DotId, at: Point): Promise<Diagram> {
-  const source = await askForSource(shell.bar, toPagePoint(shell.canvas, at));
-  if (!source) {
-    return shell.current;
-  }
-
-  await vetSource(source);
-  clearSource(shell.bar);
-  return labelDot(shell.current, dot, source);
+  const vetted = await askForSource(shell.bar, toPagePoint(shell.canvas, at), async (source) => {
+    await vetSource(source);
+    return source;
+  });
+  return vetted === undefined ? shell.current : labelDot(shell.current, dot, vetted);
 }

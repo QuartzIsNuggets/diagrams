@@ -404,9 +404,9 @@ async function mustSet(source: Source): Promise<GlyphRun> {
 /**
  * Set `source`, rejecting where this backend cannot.
  *
- * The vetting a gesture does before a source enters the diagram: nothing typed
- * puts a source there that this backend cannot draw, so what is refused stays
- * in the input to be corrected rather than becoming a mark with no label.
+ * The vetting the naming bar does before it will close: nothing typed puts a
+ * source in a diagram that this backend cannot draw, so what is refused keeps
+ * the bar open at its mark rather than becoming a mark with no label.
  *
  * It hands back nothing. What setting a source produces is glyph geometry, and
  * that never leaves this backend — the caller asked whether the source can be

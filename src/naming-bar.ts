@@ -2,30 +2,35 @@
 //
 // SPDX-License-Identifier: MIT
 
-// The naming bar: the one place a source is typed, and nothing more. It puts no
-// mark anywhere — it is asked for a source and it answers with one — so what a
-// source becomes, and where, belongs entirely to whoever asked.
+// The naming bar: the one place a source is typed, and the only thing that ever
+// tries one. It puts no mark anywhere — what a source becomes, and where, still
+// belongs entirely to whoever asked — but it holds the question open until that
+// source is known to work, so a refusal is corrected where it was typed.
 
 import type { Source } from "./diagram";
+import { messageOf } from "./failure";
 import type { PagePoint } from "./render-svg";
 
 /**
- * The one place a source is typed, and what it is currently being asked.
+ * The one place a source is typed, the line a refusal is put on, and what the
+ * bar is currently being asked.
  *
- * There is one input, so there is at most one outstanding question, and
- * `answer` is that question's one reply. Held beside the form rather than in it
- * so the bar stays an ordinary element its holder can put anywhere.
+ * There is one input, so there is at most one outstanding question — but that
+ * question takes as many `answer`s as it needs, every refused source leaving it
+ * open for the next. Held beside the form rather than in it so the bar stays an
+ * ordinary element its holder can put anywhere.
  */
 interface Bar {
   readonly input: HTMLInputElement;
+  readonly reason: HTMLParagraphElement;
   answer?: ((source: Source) => void) | undefined;
 }
 
 const bars = new WeakMap<HTMLFormElement, Bar>();
 
 /**
- * The naming bar — a text input and the button that submits what is in it —
- * wired and ready to append.
+ * The naming bar — a text input, the button that submits what is in it, and the
+ * line a source that will not work is refused on — wired and ready to append.
  *
  * It comes back already listening rather than as an inert element a caller has
  * to remember to enable: a bar nothing can answer through is not a useful thing
@@ -34,10 +39,11 @@ const bars = new WeakMap<HTMLFormElement, Bar>();
  * there being exactly one place a source is typed and it going to whatever it
  * names.
  *
- * It reports nothing of its own. A source that will not typeset is refused by
- * the backend that would have drawn it, which is what the gesture that asked
- * hears, and one region says so for every gesture alike — a second one here
- * would be two error surfaces answering one question.
+ * The refusal line is its own and answers one question: *why is this still
+ * asking me?* The region the canvas keeps answers the other — *why did nothing
+ * appear?* — and neither can be put where the other is, a bar that is gone
+ * having nothing to say and a corner of the canvas being nowhere to correct a
+ * source from.
  */
 export function createNamingBar(): HTMLFormElement {
   const form = document.createElement("form");
@@ -53,59 +59,117 @@ export function createNamingBar(): HTMLFormElement {
   button.type = "submit";
   button.textContent = "Typeset";
 
-  form.append(input, button);
-  bars.set(form, { input });
+  // In the tree before it has anything to say, so a refusal is announced rather
+  // than appearing from nowhere. Above the input, and repeating no source back:
+  // the source it is about is on the line below, still there to be corrected.
+  const reason = document.createElement("p");
+  reason.classList.add("naming-error");
+  reason.setAttribute("role", "alert");
+
+  form.append(reason, input, button);
+  bars.set(form, { input, reason });
   enableAnswering(form);
   return form;
 }
 
 /**
- * Ask for a source at a point on the page: the bar leaves its corner and sits
- * there until the question is answered.
+ * Ask for a source at a point on the page: the bar leaves its corner, sits
+ * there, and stays until `vet` takes a source or the question is given up on.
  *
  * It is the same input, unpinned — not a modal, which would cover the mark it
- * asks about, and not a second field beside the standing bar, which would be two
- * error surfaces answering one question. What is already typed is left in place
- * and selected, so a source a gesture refused can be corrected rather than
- * retyped.
+ * asks about, and not a second field beside a standing bar, which would be two
+ * places one source could be typed. Trying the source is the bar's own work
+ * rather than the caller's: the bar cannot know it may close until the source is
+ * known to work, so `vet` is handed in and whatever it rejects with is put on
+ * the line above the input, the source left in place to be corrected and Enter
+ * pressed again to retry.
  *
- * Resolves with what was typed, and with the empty source where the question
- * was given up on: Escape, and equally a submit with nothing in it, there being
- * nothing to name.
+ * Resolves with whatever `vet` handed back, and with nothing at all where the
+ * question was given up on: Escape, and equally a submit with nothing in it,
+ * there being nothing to name. Those two roads are the whole of how a naming
+ * ends, which is why the input is emptied on both and every question opens from
+ * nothing typed.
+ *
+ * The bar is asking before the caller has the promise back — a gesture is what
+ * moves it there, and the release that started that gesture is a plausible
+ * moment for the first keystroke.
  */
-export function askForSource(form: HTMLFormElement, at: PagePoint): Promise<Source> {
+export async function askForSource<Vetted>(
+  form: HTMLFormElement,
+  at: PagePoint,
+  vet: (source: Source) => Promise<Vetted>,
+): Promise<Vetted | undefined> {
   const bar = bars.get(form);
   if (!bar) {
-    return Promise.resolve("");
+    return;
   }
   form.classList.add("asking");
-  // The point is where the label goes, which is the middle of the bar's bottom
-  // edge, so the corner it is placed by is that point less half its width and
-  // all of its height. Measured rather than left to a percentage transform,
-  // which would blur it — see `.naming-bar.asking` in the stylesheet.
-  const { width, height } = form.getBoundingClientRect();
-  form.style.left = `${String(at.left - width / 2)}px`;
-  form.style.top = `${String(at.top - height)}px`;
+  hangAt(form, at);
   bar.input.focus();
-  bar.input.select();
 
-  return new Promise((resolve) => {
+  return await new Promise<Vetted | undefined>((resolve) => {
+    let over = false;
+    const close = (vetted?: Vetted): void => {
+      // A vetting still in flight when the question was given up on lands here
+      // afterwards, by which time the bar may already be asking about the next
+      // mark: what it hands back belongs to a question nobody is waiting on.
+      if (!over) {
+        over = true;
+        shut(form, bar);
+        resolve(vetted);
+      }
+    };
+
     bar.answer = (source) => {
-      bar.answer = undefined;
-      form.classList.remove("asking");
-      form.style.removeProperty("left");
-      form.style.removeProperty("top");
-      resolve(source);
+      if (source) {
+        void vet(source).then(close, (failure: unknown) => {
+          if (!over) {
+            bar.reason.textContent = messageOf(failure);
+          }
+        });
+      } else {
+        close();
+      }
     };
   });
 }
 
-/** Empty the input: what it held has landed, and the next source can be typed. */
-export function clearSource(form: HTMLFormElement): void {
-  const bar = bars.get(form);
-  if (bar) {
-    bar.input.value = "";
-  }
+/**
+ * Hang the bar off `at`: the point is where the label goes, and it is the middle
+ * of the bar's bottom edge that goes there.
+ *
+ * By that edge rather than by its top, so a refusal arriving on the line above
+ * the input grows the bar upward, away from the mark it is about, instead of
+ * pushing the input down over it. Which leaves the width the one thing measured
+ * — halved, to centre the bar on the point — and a width is not something a
+ * refusal changes.
+ *
+ * Measured rather than left to a percentage transform, which would be the
+ * shorter way to say it and cannot be used: a transform makes a fixed element a
+ * composited layer, and the layer lands on the fractional offset half a
+ * `ch`-derived width comes to, which WebKit resamples into a blur.
+ */
+function hangAt(form: HTMLFormElement, at: PagePoint): void {
+  const { width } = form.getBoundingClientRect();
+  form.style.left = `${String(at.left - width / 2)}px`;
+  form.style.bottom = `${String(window.innerHeight - at.top)}px`;
+}
+
+/**
+ * Put the bar away: it is answering nobody, holds no source and is back in its
+ * corner.
+ *
+ * The one road out of a question, so the input is emptied here and nowhere else
+ * — a naming ends on a source that worked or on being given up on, and neither
+ * leaves anything the next question could want.
+ */
+function shut(form: HTMLFormElement, bar: Bar): void {
+  bar.answer = undefined;
+  bar.input.value = "";
+  bar.reason.textContent = "";
+  form.classList.remove("asking");
+  form.style.removeProperty("left");
+  form.style.removeProperty("bottom");
 }
 
 /**
@@ -115,6 +179,10 @@ export function clearSource(form: HTMLFormElement): void {
  * A submit with nothing outstanding does nothing at all: the bar names a mark,
  * and there is no mark to name until a gesture asks. It is still stopped from
  * navigating, which a form does whether or not anyone is listening.
+ *
+ * Escape reads the same whatever state the question is in — a source refused is
+ * still a question, and giving up on one is no more work than giving up on a
+ * fresh one.
  */
 function enableAnswering(form: HTMLFormElement): void {
   form.addEventListener("submit", (event: SubmitEvent) => {
