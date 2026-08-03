@@ -41,13 +41,14 @@ export interface Editor {
  * The editor — the canvas, and the region a refused gesture is reported in —
  * wired and ready to append.
  *
- * `bar` is the one place a source is typed: the shell sends it to whatever is
- * being named — the rectangle a box is drawn in, the dot just plopped — and
- * takes the source back from it, which is all either knows of the other. It
- * comes back already listening, there being no useful moment between a canvas
- * and a canvas that draws.
+ * The naming bar is not among them: it is summoned at whatever is being named —
+ * the rectangle a box is drawn in, the dot just plopped — and is gone once that
+ * question is answered, so there is never a bar for a page to hold. The shell
+ * asks for a source and takes one back, which is all either knows of the other.
+ * The editor comes back already listening, there being no useful moment between
+ * a canvas and a canvas that draws.
  */
-export function createEditor(canvas: SVGSVGElement, bar: HTMLFormElement): Editor {
+export function createEditor(canvas: SVGSVGElement): Editor {
   const region = document.createElement("div");
   region.classList.add("editor");
 
@@ -60,7 +61,7 @@ export function createEditor(canvas: SVGSVGElement, bar: HTMLFormElement): Edito
   refusal.setAttribute("role", "alert");
 
   region.append(canvas, refusal);
-  const shell = enableDrawing(canvas, bar, refusal);
+  const shell = enableDrawing(canvas, refusal);
   return { region, diagramNow: () => shell.current };
 }
 
@@ -89,17 +90,16 @@ function unsetWording(unset: readonly Unset[]): string {
 }
 
 /**
- * What a gesture acts on: the diagram on screen, what draws it, what asks for a
- * source, and where a refusal is put.
+ * What a gesture acts on: the diagram on screen, what draws it, and where a
+ * refusal is put.
  *
  * The one mutable thing the editor has. `current` is the document — every mark
- * on the canvas is there because it holds one — and `naming` says whether the
- * single input is already answering someone, since a second question would
- * throw away the first's typed source.
+ * on the canvas is there because it holds one — and `naming` says whether a bar
+ * is already asking about a mark, since a second question would throw away the
+ * first's typed source.
  */
 interface Shell {
   readonly canvas: SVGSVGElement;
-  readonly bar: HTMLFormElement;
   readonly refusal: HTMLParagraphElement;
   current: Diagram;
   naming: boolean;
@@ -185,17 +185,13 @@ async function nameDot(shell: Shell, at: Point): Promise<void> {
  * extents it holds rather than from anything drawn. What the press settled on is
  * kept in `making` until the release places it.
  *
- * A press while a question is open starts nothing: one input holds one question,
+ * A press while a question is open starts nothing: one bar holds one question,
  * and a press that quietly cancelled it would throw away a typed source.
  *
  * The shell comes back so what is on screen can be read out of it.
  */
-function enableDrawing(
-  canvas: SVGSVGElement,
-  bar: HTMLFormElement,
-  refusal: HTMLParagraphElement,
-): Shell {
-  const shell: Shell = { canvas, bar, refusal, current: EMPTY_DIAGRAM, naming: false };
+function enableDrawing(canvas: SVGSVGElement, refusal: HTMLParagraphElement): Shell {
+  const shell: Shell = { canvas, refusal, current: EMPTY_DIAGRAM, naming: false };
   let making: "box" | "dot" = "box";
   draw(shell);
 
@@ -223,7 +219,7 @@ function enableDrawing(
  * box — or the one handed in, where the question was given up on.
  *
  * The rectangle stays up for as long as the bar does: it is what the question is
- * about, which is why the input goes to it rather than a modal covering it, and
+ * about, which is why the bar is summoned onto it rather than covering it, and
  * a source being corrected is still that question. Measuring the box is what
  * vets its source — a floor is what the drawing needs anyway, and a source that
  * has none is a source this backend will not set — so the bar keeps asking until
@@ -233,7 +229,7 @@ async function boxFrom(shell: Shell, drag: Extent): Promise<Diagram> {
   // At the label slot a new box takes, so a source is typed where the label it
   // becomes will be.
   const slot = toPagePoint(shell.canvas, { x: drag.x, y: drag.y + drag.h / 2 });
-  const box = await askForSource(shell.bar, slot, async (source) => {
+  const box = await askForSource(slot, async (source) => {
     const floor = await measureBox(source);
     return {
       source,
@@ -257,7 +253,7 @@ async function boxFrom(shell: Shell, drag: Extent): Promise<Diagram> {
  * unnamed meanwhile, which it may do for good if the question is given up on.
  */
 async function dotNamed(shell: Shell, dot: DotId, at: Point): Promise<Diagram> {
-  const vetted = await askForSource(shell.bar, toPagePoint(shell.canvas, at), async (source) => {
+  const vetted = await askForSource(toPagePoint(shell.canvas, at), async (source) => {
     await vetSource(source);
     return source;
   });

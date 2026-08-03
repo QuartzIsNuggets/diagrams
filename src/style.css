@@ -38,12 +38,15 @@ body {
   stroke-dasharray: 6 4;
 }
 
-/* The controls float over the canvas rather than taking room from it: the naming
-   bar in one bottom corner, the Export button in the other. */
+/* The controls float over the canvas rather than taking room from it. Which
+   corner is not one of them: the naming bar is on the page only while it is
+   asking about a mark, and it is at that mark, so naming-bar.ts sets the
+   `left`/`bottom` that puts it there and there is no rule here to say where it
+   rests. The Export button acts on the whole diagram, has no mark to go to, and
+   keeps its corner. */
 .naming-bar,
 .export-controls {
   position: fixed;
-  bottom: 16px;
   font:
     14px system-ui,
     sans-serif;
@@ -51,13 +54,10 @@ body {
 
 /* The line a refused source is explained on, then the input and its button —
    two rows reached by wrapping rather than by a row of its own, the bar having
-   nothing on the first the rest of the time. The bar hangs by its bottom edge
-   throughout, in its corner and at a mark alike, so that line arriving lifts the
-   input rather than pushing it down over what it is asking about: while a
-   gesture is naming something the bar leaves its corner for the label slot of
-   the mark it names, which naming-bar.ts sets as an inline `left`/`bottom`. */
+   nothing on the first until something is refused. The bar hangs by its bottom
+   edge, which is the edge that sits on the mark, so that line arriving lifts the
+   input rather than pushing it down over what it is asking about. */
 .naming-bar {
-  left: 16px;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -74,6 +74,7 @@ body {
    moving out from under the cursor that just pressed it. */
 .export-controls {
   right: 16px;
+  bottom: 16px;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
@@ -107,8 +108,8 @@ body {
 
 /* Empty until something is refused — a gesture, a source, a write — so they take
    no room the rest of the time. The bar's has to say so outright: an empty flex
-   item still claims a line, and the bar is placed by the height it has while
-   asking. */
+   item still claims a wrapped line, which would hold the input that far clear of
+   its mark for as long as nothing is wrong. */
 .canvas-error,
 .export-error,
 .naming-error {
@@ -121,13 +122,13 @@ body {
 }
 
 /* A filesystem refusal names a path and can run long. Wrapping it keeps the
-   column from spreading across the canvas into the naming bar. */
+   column from spreading across the canvas. */
 .export-error {
   max-width: 40ch;
 }
 
 /* The canvas's own region, for a gesture that put nothing on it. At the top,
-   clear of the controls along the bottom and of the rectangle that just went. */
+   clear of the export control's corner and of the rectangle that just went. */
 .canvas-error {
   position: fixed;
   top: 16px;

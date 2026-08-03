@@ -8,16 +8,17 @@
 // gesture in render-svg.test.ts — and what is left here is the wiring between
 // them, which is only true of a real document.
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createCanvas } from "./canvas";
 import { EMPTY_DIAGRAM } from "./diagram";
 import type { Editor } from "./editor";
 import { createEditor } from "./editor";
-import { createNamingBar } from "./naming-bar";
+
+/** The width every bar summoned in these tests reports having. */
+const BAR_WIDTH = 200;
 
 let canvas: SVGSVGElement;
-let bar: HTMLFormElement;
 let editor: Editor;
 
 function boxesOn(): SVGRectElement[] {
@@ -58,10 +59,24 @@ function dragOut(fromX: number, fromY: number, toX: number, toY: number): void {
   pointer("pointerup", toX, toY);
 }
 
+/** The bar, if a gesture is being asked about: it is on the page only then. */
+function barOn(): HTMLFormElement | null {
+  return document.querySelector<HTMLFormElement>(".naming-bar");
+}
+
+/** The bar there had better be, for a test that answers what it is asking. */
+function bar(): HTMLFormElement {
+  const found = barOn();
+  if (!found) {
+    throw new Error("no bar is asking");
+  }
+  return found;
+}
+
 /** Type `latex` into the bar and press its button, the way a user would. */
 function submit(latex: string): void {
-  const input = bar.querySelector("input");
-  const button = bar.querySelector<HTMLButtonElement>("button[type=submit]");
+  const input = bar().querySelector("input");
+  const button = bar().querySelector<HTMLButtonElement>("button[type=submit]");
   if (!input || !button) {
     throw new Error("the bar has lost its input");
   }
@@ -70,18 +85,7 @@ function submit(latex: string): void {
 }
 
 function press(key: string): void {
-  bar.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
-}
-
-/**
- * Give the bar an extent.
- *
- * jsdom has no layout, so every `getBoundingClientRect()` is zeros — and the
- * bar's own extent is half of where it goes, the shell placing it by its corner
- * rather than translating it onto the point.
- */
-function sizeBar(width: number, height: number): void {
-  bar.getBoundingClientRect = (): DOMRect => new DOMRect(0, 0, width, height);
+  bar().dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
 }
 
 /** Drag a box out and name it, waiting for it to land. */
@@ -100,8 +104,8 @@ async function makeBox(
 /** Give up on whatever the bar is asking, and wait for the gesture to be over. */
 async function giveUp(): Promise<void> {
   press("Escape");
-  await vi.waitFor(() => expect(bar.classList.contains("asking")).toBe(false));
-  // The bar closes as Escape is read; the gesture it was asking for ends a turn
+  await vi.waitFor(() => expect(barOn()).toBeNull());
+  // The bar goes as Escape is read; the gesture it was asking for ends a turn
   // later, when the naming it was waiting on comes back. A test that goes on to
   // make the next mark has to be past that — one question is open at a time.
   await new Promise((resume) => {
@@ -128,7 +132,7 @@ function refusalText(): string {
 
 /** What the bar says of the source it is holding: the other of the two regions. */
 function barReason(): string {
-  return bar.querySelector(".naming-error")?.textContent ?? "";
+  return barOn()?.querySelector(".naming-error")?.textContent ?? "";
 }
 
 /** A source no backend will set, whatever mark is being named with it. */
@@ -142,9 +146,18 @@ async function refuseSource(): Promise<void> {
 
 beforeEach(() => {
   canvas = createCanvas();
-  bar = createNamingBar();
-  editor = createEditor(canvas, bar);
-  document.body.replaceChildren(editor.region, bar);
+  editor = createEditor(canvas);
+  document.body.replaceChildren(editor.region);
+  // jsdom has no layout, so every `getBoundingClientRect()` is zeros — and half
+  // the bar's width is where it goes, the bar centring itself on the mark. On
+  // the prototype because there is no bar until a gesture summons one.
+  vi.spyOn(HTMLFormElement.prototype, "getBoundingClientRect").mockReturnValue(
+    new DOMRect(0, 0, BAR_WIDTH, 30),
+  );
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe("the editor", () => {
@@ -172,17 +185,14 @@ describe("the editor", () => {
 });
 
 describe("a drag on empty canvas", () => {
-  it("asks for a type expression, at the slot the label will take", () => {
-    sizeBar(200, 30);
-
+  it("summons a bar for a type expression, at the slot the label will take", () => {
     dragOut(40, 40, 140, 90);
 
-    expect(bar.classList.contains("asking")).toBe(true);
     // The middle of the bar's bottom edge sits on the middle of the rectangle's
     // top edge — (90, 40) in page coordinates — so the bar hangs half a width
     // left of that, and that far up from the foot of the window.
-    expect([bar.style.left, bar.style.bottom]).toEqual([
-      "-10px",
+    expect([bar().style.left, bar().style.bottom]).toEqual([
+      `${String(90 - BAR_WIDTH / 2)}px`,
       `${String(window.innerHeight - 40)}px`,
     ]);
   });
@@ -207,11 +217,10 @@ describe("a drag on empty canvas", () => {
     expect(canvas.querySelectorAll("g.box-label path").length).toBeGreaterThan(0);
   });
 
-  it("empties the bar, so the next box starts from nothing typed", async () => {
+  it("takes the bar off the page once the box lands, the question being answered", async () => {
     await makeBox([40, 40], [240, 140]);
 
-    expect(bar.querySelector("input")?.value).toBe("");
-    expect(bar.classList.contains("asking")).toBe(false);
+    expect(barOn()).toBeNull();
   });
 });
 
@@ -253,7 +262,7 @@ describe("a box's source that will not typeset", () => {
     await refuseSource();
 
     expect(boxesOn()).toHaveLength(0);
-    expect(bar.classList.contains("asking")).toBe(true);
+    expect(barOn()).not.toBeNull();
     expect(canvas.querySelector("g.chrome > rect")).not.toBeNull();
   });
 
@@ -262,7 +271,7 @@ describe("a box's source that will not typeset", () => {
 
     await refuseSource();
 
-    expect(bar.querySelector("input")?.value).toBe(BAD);
+    expect(bar().querySelector("input")?.value).toBe(BAD);
   });
 
   it("is answered at the mark and not in the canvas's own region", async () => {
@@ -295,8 +304,7 @@ describe("correcting a box's source", () => {
     await giveUp();
 
     expect(boxesOn()).toHaveLength(0);
-    expect(bar.querySelector("input")?.value).toBe("");
-    expect(barReason()).toBe("");
+    expect(barOn()).toBeNull();
     expect(canvas.querySelector("g.chrome")).toBeNull();
   });
 
@@ -331,12 +339,11 @@ describe("giving up on a box", () => {
     expect(boxesOn()).toHaveLength(0);
   });
 
-  it("leaves the bar back in its corner, ready for the next one", async () => {
+  it("leaves no bar on the page, ready for the next one", async () => {
     dragOut(40, 40, 240, 140);
     press("Escape");
     await vi.waitFor(() => expect(canvas.querySelector("g.chrome")).toBeNull());
-    expect(bar.classList.contains("asking")).toBe(false);
-    expect(bar.style.left).toBe("");
+    expect(barOn()).toBeNull();
 
     const [box] = await makeBox([300, 300], [400, 400]);
 
@@ -384,7 +391,12 @@ describe("naming a term-dot", () => {
     dragOut(100, 100, 150, 120);
 
     expect(dotsOn()).toHaveLength(1);
-    expect(bar.classList.contains("asking")).toBe(true);
+    // At the dot itself — (150, 120) in page coordinates — rather than where the
+    // glyphs will land, which is the backend's own business.
+    expect([bar().style.left, bar().style.bottom]).toEqual([
+      `${String(150 - BAR_WIDTH / 2)}px`,
+      `${String(window.innerHeight - 120)}px`,
+    ]);
     await giveUp();
   });
 
@@ -416,8 +428,7 @@ describe("a dot's source that will not typeset", () => {
 
     expect(dotsOn()).toHaveLength(1);
     expect(dotLabelsOn()).toHaveLength(0);
-    expect(bar.querySelector("input")?.value).toBe(BAD);
-    expect(bar.classList.contains("asking")).toBe(true);
+    expect(bar().querySelector("input")?.value).toBe(BAD);
     expect(refusalText()).toBe("");
   });
 
@@ -430,6 +441,10 @@ describe("a dot's source that will not typeset", () => {
 
     expect(boxesOn()).toHaveLength(1);
     expect(canvas.querySelector("g.chrome")).toBeNull();
+    // Still the one bar, still holding what was typed: no second was summoned,
+    // and the source being corrected is where it was typed.
+    expect(document.querySelectorAll(".naming-bar")).toHaveLength(1);
+    expect(bar().querySelector("input")?.value).toBe(BAD);
     await giveUp();
   });
 });

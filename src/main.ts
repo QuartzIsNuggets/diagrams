@@ -5,7 +5,6 @@
 import { createCanvas } from "./canvas";
 import { createEditor } from "./editor";
 import { createExportControls } from "./export-svg";
-import { createNamingBar } from "./naming-bar";
 import { prewarmTypesetting } from "./typesetting";
 
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -14,15 +13,16 @@ if (!app) {
 }
 
 const canvas = createCanvas();
-const namingBar = createNamingBar();
-const editor = createEditor(canvas, namingBar);
+const editor = createEditor(canvas);
 const exportControls = createExportControls(editor.diagramNow);
 
-// The bar and the export controls float over the canvas rather than sitting in
-// the editor, which is the diagram's own region and holds only what reports on
-// one.
-app.append(editor.region, namingBar, exportControls);
+// The export controls float over the canvas rather than sitting in the editor,
+// which is the diagram's own region and holds only what reports on one. They
+// keep a corner because they act on the whole diagram; the naming bar acts on a
+// mark, so it is summoned there by the gesture that asks and appears nowhere in
+// this wiring.
+app.append(editor.region, exportControls);
 
-// The canvas and the bar are on screen now; fetch the typesetter behind them so
-// it is ready by the time the first label is submitted.
+// The canvas is on screen now; fetch the typesetter behind it so it is ready by
+// the time the first label is submitted.
 void prewarmTypesetting();
