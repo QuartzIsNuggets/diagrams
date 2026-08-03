@@ -59,6 +59,25 @@ function balking(): boolean {
   return bar().classList.contains("balking");
 }
 
+/**
+ * Start watching the bar's classes, and read back whether it was mid-balk
+ * before each change since — the way {@link watched} reads what the bar said.
+ *
+ * The class is on the bar before a second refusal and on it after, so the whole
+ * of what says that one was answered is the moment between, where it was off.
+ * Read after a turn of the loop, which is when the changes are handed over.
+ */
+function balkingBefore(): boolean[] {
+  const was: boolean[] = [];
+  const watching = new MutationObserver((changes) => {
+    for (const change of changes) {
+      was.push(change.oldValue?.includes("balking") ?? false);
+    }
+  });
+  watching.observe(bar(), { attributeFilter: ["class"], attributeOldValue: true });
+  return was;
+}
+
 /** A vetting that takes every source: what a working backend does. */
 function takes(source: Source): Promise<Source> {
   return Promise.resolve(source);
@@ -598,6 +617,60 @@ describe("the line the bar's two refusals share", () => {
     await settled();
 
     expect(reasonText()).toBe(WHY);
+    press("Escape");
+    await asked;
+  });
+});
+
+// Every refusal gets its own balk, the one arriving mid-balk included: once
+// moving is what says a refusal happened, one the animation in flight absorbed
+// is a refusal with nothing to show for it.
+describe("a refusal arriving while the bar is still balking at the last", () => {
+  it("starts the balk over for a press, rather than riding the one running", async () => {
+    const asked = askForSource(AT, "required", takes);
+    pressElsewhere();
+    const before = balkingBefore();
+
+    pressElsewhere();
+    await settled();
+
+    expect(before).toEqual([true, false]);
+    expect(balking()).toBe(true);
+    // And the balk it started is one that ends, the same way the first did.
+    bar().dispatchEvent(new Event("animationend"));
+    expect(balking()).toBe(false);
+    press("Escape");
+    await asked;
+  });
+
+  it("starts it over for a source refused again, where the sentence is unchanged", async () => {
+    void ask(AT, refusing(2));
+    submit(LATEX);
+    await settled();
+    const before = balkingBefore();
+
+    submit(LATEX);
+    await settled();
+
+    expect(before).toEqual([true, false]);
+    expect([balking(), reasonText()]).toEqual([true, WHY]);
+  });
+
+  it("measures the bar between, an attribute set twice being one style", async () => {
+    const asked = askForSource(AT, "required", takes);
+    pressElsewhere();
+    const form = bar();
+    const balkingWhenMeasured: boolean[] = [];
+    vi.spyOn(HTMLFormElement.prototype, "getBoundingClientRect").mockImplementation(() => {
+      balkingWhenMeasured.push(form.classList.contains("balking"));
+      return new DOMRect(0, 0, WIDTH, HEIGHT);
+    });
+
+    pressElsewhere();
+
+    // Measured once, mid-restart, with the class off: both writes handed to a
+    // browser inside one task lay out nothing, and the balk goes on running.
+    expect(balkingWhenMeasured).toEqual([false]);
     press("Escape");
     await asked;
   });

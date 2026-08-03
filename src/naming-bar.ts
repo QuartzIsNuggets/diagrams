@@ -271,35 +271,51 @@ function raise(at: PagePoint): Bar {
   reason.classList.add("naming-error");
   reason.setAttribute("role", "alert");
 
-  // The balk runs off a class, and the class comes off as the animation under
-  // it ends so the next balk can put it back: a balk is a thing that happened
-  // rather than a state the bar is in. Which is why the stylesheet answers a
-  // reader who wants no motion with another animation rather than with none —
-  // one that never runs never ends, and the class would stick and swallow every
-  // refusal after it. Listened for on the bar, so an animation on anything it
-  // holds ends here too.
-  form.addEventListener("animationend", () => {
-    form.classList.remove("balking");
-  });
-
-  // Both of the bar's refusals arrive here, because a refusal it survives has
-  // two things to say and needs both channels to say them. Moving is what says
-  // one happened *now*, and is the only thing that tells a second from a first
-  // where the words are identical; the line is what says what was wrong, which
-  // no amount of moving can. One line for the two of them, standing for the
-  // last — so a refused press replaces why a source would not set, and one
-  // Enter re-asks. A refusal landing mid-balk adds a class already there and
-  // changes nothing, the bar being mid-refusal at that moment anyway.
-  const balk = (why: string): void => {
-    reason.textContent = why;
-    form.classList.add("balking");
-  };
+  const balk = enableBalking(form, reason);
 
   form.append(reason, input);
   document.body.append(form);
   hangAt(form, at);
   input.focus();
   return { form, input, balk };
+}
+
+/**
+ * Give `form` its balk, and hand it back as the one act it is announced by.
+ *
+ * Both of the bar's refusals go through this, because a refusal it survives has
+ * two things to say and needs both channels to say them. Moving is what says one
+ * happened *now*, and is the only thing that tells a second from a first where
+ * the words are identical; `reason` is what says what was wrong, which no amount
+ * of moving can. One line for the two of them, standing for the last — so a
+ * refused press replaces why a source would not set, and one Enter re-asks.
+ *
+ * The motion runs off a class, and the class comes off as the animation under it
+ * ends: a balk is a thing that happened rather than a state the bar is in.
+ * Which is why the stylesheet answers a reader who wants no motion with another
+ * animation rather than with none — one that never runs never ends, and the
+ * class would stick and swallow every refusal after it. Listened for on the bar,
+ * so an animation on anything it holds ends here too.
+ *
+ * Every balk starts over rather than riding one still in flight, a refusal that
+ * shows nothing being no refusal at all. What goes off and back on is the class,
+ * never the animation: the one the still branch runs is the input's, which only
+ * the class reaches. Measuring between the two writes is what makes them a pair
+ * the browser sees — an attribute set twice inside one task is one style it
+ * never saw change. The measure goes the day a balk is an animation object with
+ * a `currentTime` to rewind.
+ */
+function enableBalking(form: HTMLFormElement, reason: HTMLParagraphElement): (why: string) => void {
+  form.addEventListener("animationend", () => {
+    form.classList.remove("balking");
+  });
+
+  return (why: string): void => {
+    reason.textContent = why;
+    form.classList.remove("balking");
+    form.getBoundingClientRect();
+    form.classList.add("balking");
+  };
 }
 
 /**
