@@ -27,6 +27,7 @@ interface Question {
   readonly form: HTMLFormElement;
   readonly naming: Naming;
   readonly answer: (source: Source) => void;
+  readonly balk: (why: string) => void;
 }
 
 let open: Question | undefined;
@@ -81,8 +82,8 @@ export function whileNaming(watch: (asking: boolean) => void): void {
  * every source belongs to some mark; not a modal, which would cover the mark it
  * asks about. Trying the source is the bar's own work rather than the caller's:
  * it cannot know it may go until the source is known to work, so `vet` is handed
- * in and whatever it rejects with is put on the line above the input, the source
- * left in place to be corrected and Enter pressed again to retry.
+ * in and the bar balks with whatever it rejects with, the source left in place
+ * to be corrected and Enter pressed again to retry.
  *
  * Resolves with whatever `vet` handed back, and with nothing at all where the
  * question was given up on: Escape, a submit with nothing in it, there being
@@ -108,7 +109,7 @@ export async function askForSource<Vetted>(
   vet: (source: Source) => Promise<Vetted>,
 ): Promise<Vetted | undefined> {
   open?.answer("");
-  const { form, input, reason } = raise(at);
+  const { form, input, balk } = raise(at);
 
   return await new Promise<Vetted | undefined>((resolve) => {
     // A vetting still in flight when the question was given up on lands here
@@ -128,7 +129,7 @@ export async function askForSource<Vetted>(
       if (source) {
         void vet(source).then(close, (failure: unknown) => {
           if (open?.form === form) {
-            reason.textContent = messageOf(failure);
+            balk(messageOf(failure));
           }
         });
       } else {
@@ -136,10 +137,25 @@ export async function askForSource<Vetted>(
       }
     };
 
-    nowAsking({ form, naming, answer });
+    nowAsking({ form, naming, answer, balk });
     enableAnswering(form, input);
   });
 }
+
+/**
+ * What the bar says to a press it will not take.
+ *
+ * Its own sentence, and the same one for every `required` naming: what makes a
+ * label required is that the mark *is* it, which is the same fact whatever the
+ * mark, and the mark itself is on the page under the bar to be read. So a kind
+ * that becomes drawable later is covered without a word being added here.
+ *
+ * It names the exit that does work, the user having just tried the one that
+ * does not — a refusal that is a dead end is no answer at all. That is not a
+ * hint at rest: the line is empty until something is refused, so Escape is
+ * earned by a press rather than offered to nobody.
+ */
+const PRESS_REFUSED = "Provide a label or abort with Esc";
 
 /**
  * Put a press the caller reads as landing away from the bar to the open
@@ -152,12 +168,12 @@ export async function askForSource<Vetted>(
  * start whatever gesture it began, which is what makes putting down the next
  * mark one press rather than Escape and a press. Where the mark **is** its
  * label the press is refused instead, the question staying open with its source
- * in it while the bar says no by moving. Which of the two it is comes off the
- * {@link Naming} the question was asked with, this reading nothing else about
- * the mark.
+ * in it while the bar balks and says {@link PRESS_REFUSED}. Which of the two it
+ * is comes off the {@link Naming} the question was asked with, this reading
+ * nothing else about the mark.
  *
  * It answers rather than reports: a press it hands back `goes-on` has been given
- * up on already, and one it refuses has set the bar swinging. So a caller that
+ * up on already, and one it refuses has set the bar balking. So a caller that
  * asks and then ignores the answer has still ended a naming.
  *
  * A press while nothing is being named goes on: there is no question for it to
@@ -168,21 +184,18 @@ export function pressElsewhere(): "goes-on" | "refused" {
     return "goes-on";
   }
   if (open.naming === "required") {
-    // Put back on by the next refused press, the swing having taken it off as
-    // it ended. A press *during* a swing adds a class already there and changes
-    // nothing, the bar being mid-refusal at that moment anyway.
-    open.form.classList.add("press-refused");
+    open.balk(PRESS_REFUSED);
     return "refused";
   }
   open.answer("");
   return "goes-on";
 }
 
-/** A bar on the page, and the two parts of it a question needs to reach. */
+/** A bar on the page: what a question reaches into it, and what it does to it. */
 interface Bar {
   readonly form: HTMLFormElement;
   readonly input: HTMLInputElement;
-  readonly reason: HTMLParagraphElement;
+  readonly balk: (why: string) => void;
 }
 
 /**
@@ -258,22 +271,35 @@ function raise(at: PagePoint): Bar {
   reason.classList.add("naming-error");
   reason.setAttribute("role", "alert");
 
-  // The swing a refused press is answered with runs off a class, and the class
-  // comes off as the swing ends so the next one can put it back: an animation
-  // is a thing that happened rather than a state the bar is in. Which is why
-  // the stylesheet answers a reader who wants no motion with another animation
-  // rather than with none — one that never runs never ends, and the class would
-  // stick and swallow every press after it. Listened for on the bar, so an
-  // animation on anything it holds ends here too.
+  // The balk runs off a class, and the class comes off as the animation under
+  // it ends so the next balk can put it back: a balk is a thing that happened
+  // rather than a state the bar is in. Which is why the stylesheet answers a
+  // reader who wants no motion with another animation rather than with none —
+  // one that never runs never ends, and the class would stick and swallow every
+  // refusal after it. Listened for on the bar, so an animation on anything it
+  // holds ends here too.
   form.addEventListener("animationend", () => {
-    form.classList.remove("press-refused");
+    form.classList.remove("balking");
   });
+
+  // Both of the bar's refusals arrive here, because a refusal it survives has
+  // two things to say and needs both channels to say them. Moving is what says
+  // one happened *now*, and is the only thing that tells a second from a first
+  // where the words are identical; the line is what says what was wrong, which
+  // no amount of moving can. One line for the two of them, standing for the
+  // last — so a refused press replaces why a source would not set, and one
+  // Enter re-asks. A refusal landing mid-balk adds a class already there and
+  // changes nothing, the bar being mid-refusal at that moment anyway.
+  const balk = (why: string): void => {
+    reason.textContent = why;
+    form.classList.add("balking");
+  };
 
   form.append(reason, input);
   document.body.append(form);
   hangAt(form, at);
   input.focus();
-  return { form, input, reason };
+  return { form, input, balk };
 }
 
 /**

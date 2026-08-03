@@ -95,19 +95,20 @@ body {
   border-bottom: var(--tail-size) solid #cccccc;
 }
 
-/* Saying no to a press that would have destroyed a mark which cannot exist
-   unnamed: the bar swings and stays where it was. Movement is the whole of the
-   answer, the press having changed nothing else on the page — and the tail
-   swings with the body, so the bar comes back onto its mark rather than pointing
-   somewhere new. A transform where the tail's placement is careful to avoid one:
-   what that rules out is a bar left standing on a fractional offset, which
-   WebKit resamples into a blur, and this one is over in a fifth of a second and
-   ends at none. */
-.naming-bar.press-refused {
-  animation: press-refused 200ms;
+/* The balk: how the bar answers either of the refusals it survives — a source
+   the backend will not set, and a press that would have destroyed a mark which
+   cannot exist unnamed. It moves and stays where it was, which is what says a
+   refusal happened *now* where the line above the input says what was wrong. The
+   tail swings with the body, so the bar comes back onto its mark rather than
+   pointing somewhere new. A transform where the tail's placement is careful to
+   avoid one: what that rules out is a bar left standing on a fractional offset,
+   which WebKit resamples into a blur, and this one is over in a fifth of a
+   second and ends at none. */
+.naming-bar.balking {
+  animation: balking 200ms;
 }
 
-@keyframes press-refused {
+@keyframes balking {
   20%,
   60% {
     transform: translateX(-6px);
@@ -123,19 +124,19 @@ body {
    refusal's own colour, run over the edge the source is typed inside. Another
    animation rather than none — the class naming-bar.ts puts on comes off when an
    animation under it ends, and one that never runs never ends, so the class
-   would stick and every press after it would be swallowed. It runs on the input
-   because that is what has an edge to colour, and the event finds the bar by
-   bubbling. */
+   would stick and every refusal after it would be swallowed. It runs on the
+   input because that is what has an edge to colour, and the event finds the bar
+   by bubbling. */
 @media (prefers-reduced-motion: reduce) {
-  .naming-bar.press-refused {
+  .naming-bar.balking {
     animation: none;
   }
 
-  .naming-bar.press-refused input {
-    animation: press-refused-still 200ms;
+  .naming-bar.balking input {
+    animation: balking-still 200ms;
   }
 
-  @keyframes press-refused-still {
+  @keyframes balking-still {
     20%,
     80% {
       border-color: #b00020;

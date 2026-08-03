@@ -551,12 +551,13 @@ describe("a press elsewhere while a box is being named", () => {
 
     dragOut(400, 400, 500, 500);
 
-    // The swing is the whole of the answer, and nothing else changed: the one
-    // bar is still asking, holding the source and the reason it was refused.
-    expect(bar().classList.contains("press-refused")).toBe(true);
+    // The balk says a refusal happened and the line says which, and nothing
+    // else changed: the one bar is still asking, holding the source it was
+    // given. The line stands for the press now, that being the last refusal.
+    expect(bar().classList.contains("balking")).toBe(true);
     expect(document.querySelectorAll(".naming-bar")).toHaveLength(1);
     expect(bar().querySelector("input")?.value).toBe(BAD);
-    expect(barReason()).toMatch(/undefined control sequence/iu);
+    expect(barReason()).toMatch(/esc/iu);
     await giveUp();
   });
 

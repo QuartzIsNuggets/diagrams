@@ -22,6 +22,13 @@ const AT = { left: 300, top: 200 };
 /** What a source the backend will not set is refused with. */
 const WHY = "undefined control sequence";
 
+/**
+ * What the bar says to a press it will not take, spelled out rather than
+ * imported: this is the sentence a user reads, so a test naming it by its
+ * export would go on passing through a rewrite of it.
+ */
+const PRESS_REFUSED = "Provide a label or abort with Esc";
+
 /** The width and height every bar raised in these tests reports having. */
 const WIDTH = 200;
 const HEIGHT = 30;
@@ -47,9 +54,9 @@ function under(): boolean {
   return bar().classList.contains("under-mark");
 }
 
-/** Whether the bar is mid-swing, which is how it refuses a press. */
-function swinging(): boolean {
-  return bar().classList.contains("press-refused");
+/** Whether the bar is mid-balk, which is how it announces either refusal. */
+function balking(): boolean {
+  return bar().classList.contains("balking");
 }
 
 /** A vetting that takes every source: what a working backend does. */
@@ -392,6 +399,22 @@ describe("a source the vetting refuses", () => {
     expect(reasonText()).toBe(WHY);
     expect(reasonText()).not.toContain(LATEX);
   });
+
+  it("balks the bar too, so a second refusal reads as one and not as a bar gone deaf", async () => {
+    void ask(AT, refusing(2));
+    submit(LATEX);
+    await settled();
+    expect(balking()).toBe(true);
+
+    // The balk over, and the same source refused again: the sentence is word
+    // for word the one already on the line, so moving is the whole of what
+    // says the second refusal happened at all.
+    bar().dispatchEvent(new Event("animationend"));
+    submit(LATEX);
+    await settled();
+
+    expect([balking(), reasonText()]).toEqual([true, WHY]);
+  });
 });
 
 describe("correcting a source the vetting refused", () => {
@@ -489,32 +512,39 @@ describe("a press elsewhere while a mark that can stand unnamed is being named",
 });
 
 describe("a press elsewhere while a mark that is its label is being named", () => {
-  it("is refused: the question stays open, holding its source, and the bar swings", async () => {
+  it("is refused: the question stays open, holding its source, and the bar balks", async () => {
     const asked = askForSource(AT, "required", refusing(1));
     submit(LATEX);
     await settled();
 
     expect(pressElsewhere()).toBe("refused");
 
-    expect(swinging()).toBe(true);
+    expect(balking()).toBe(true);
     expect(input().value).toBe(LATEX);
-    expect(reasonText()).toBe(WHY);
     // Still asking: nothing has been answered, and Escape is still the way out.
     press("Escape");
     await expect(asked).resolves.toBeUndefined();
   });
 
-  it("swings again for the press after, the swing being a thing that happened", () => {
+  it("is answered with the exit that works, the one just tried being the one that does not", () => {
+    void askForSource(AT, "required", takes);
+
+    pressElsewhere();
+
+    expect(reasonText()).toBe(PRESS_REFUSED);
+  });
+
+  it("balks again for the press after, a balk being a thing that happened", () => {
     void askForSource(AT, "required", takes);
 
     pressElsewhere();
     // A bare Event: jsdom animates nothing and has no AnimationEvent to raise,
     // and what the bar reads of one is that it ended.
     bar().dispatchEvent(new Event("animationend"));
-    expect(swinging()).toBe(false);
+    expect(balking()).toBe(false);
     pressElsewhere();
 
-    expect(swinging()).toBe(true);
+    expect(balking()).toBe(true);
   });
 
   it("is done saying so when an animation inside the bar ends, not only one on it", () => {
@@ -524,10 +554,10 @@ describe("a press elsewhere while a mark that is its label is being named", () =
     // What a reader who wants no motion gets is colour run over the input's
     // edge rather than a swing of the bar, so the animation that ends is the
     // input's and the bar hears it by bubbling. A refusal that ended on
-    // nothing would leave the class on and swallow every press after it.
+    // nothing would leave the class on and swallow every refusal after it.
     input().dispatchEvent(new Event("animationend", { bubbles: true }));
 
-    expect(swinging()).toBe(false);
+    expect(balking()).toBe(false);
   });
 
   it("is what Escape is not: that gives up on a required naming too", async () => {
@@ -537,6 +567,39 @@ describe("a press elsewhere while a mark that is its label is being named", () =
 
     await expect(asked).resolves.toBeUndefined();
     expect(barOn()).toBeNull();
+  });
+});
+
+// One line for both of the bar's refusals, the way the export's region keeps
+// one for everything it reports: a second line would leave the reader to work
+// out which of two sentences the last thing they did is answered by.
+describe("the line the bar's two refusals share", () => {
+  it("stands for the last of them, a refused press replacing why a source would not set", async () => {
+    const asked = askForSource(AT, "required", refusing(1));
+    submit(LATEX);
+    await settled();
+
+    pressElsewhere();
+
+    expect(reasonText()).toBe(PRESS_REFUSED);
+    // A required naming a press cannot end: Escape is what leaves the page as
+    // quiet as this test found it.
+    press("Escape");
+    await asked;
+  });
+
+  it("is back to the source's own refusal after one Enter re-asks", async () => {
+    const asked = askForSource(AT, "required", refusing(2));
+    submit(LATEX);
+    await settled();
+    pressElsewhere();
+
+    submit(LATEX);
+    await settled();
+
+    expect(reasonText()).toBe(WHY);
+    press("Escape");
+    await asked;
   });
 });
 
