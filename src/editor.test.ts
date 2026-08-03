@@ -109,6 +109,13 @@ async function makeBox(
   return boxesOn();
 }
 
+/** Let a naming that has been answered come back: a turn of the event loop. */
+async function settled(): Promise<void> {
+  await new Promise((resume) => {
+    setTimeout(resume, 0);
+  });
+}
+
 /** Give up on whatever the bar is asking, and wait for the gesture to be over. */
 async function giveUp(): Promise<void> {
   press("Escape");
@@ -116,9 +123,7 @@ async function giveUp(): Promise<void> {
   // The bar goes as Escape is read; the gesture it was asking for ends a turn
   // later, when the naming it was waiting on comes back. A test that goes on to
   // make the next mark has to be past that — one question is open at a time.
-  await new Promise((resume) => {
-    setTimeout(resume, 0);
-  });
+  await settled();
 }
 
 /**
@@ -153,6 +158,10 @@ async function refuseSource(): Promise<void> {
 }
 
 beforeEach(() => {
+  // There is one bar for the page rather than one per editor, so a question the
+  // last test walked away from is still the open one and would refuse the first
+  // press of this test. Given up on the way a user would.
+  barOn()?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
   canvas = createCanvas();
   editor = createEditor(canvas);
   document.body.replaceChildren(editor.region);
@@ -443,19 +452,18 @@ describe("a dot's source that will not typeset", () => {
     expect(refusalText()).toBe("");
   });
 
-  it("starts no second gesture while the question is still open", async () => {
+  it("is given up on by a press elsewhere as readily as a fresh question", async () => {
     await makeBox([40, 40], [240, 140]);
     dragOut(100, 100, 100, 100);
     await refuseSource();
 
     dragOut(400, 400, 500, 500);
 
-    expect(boxesOn()).toHaveLength(1);
-    expect(canvas.querySelector("g.chrome")).toBeNull();
-    // Still the one bar, still holding what was typed: no second was summoned,
-    // and the source being corrected is where it was typed.
-    expect(document.querySelectorAll(".naming-bar")).toHaveLength(1);
-    expect(bar().querySelector("input")?.value).toBe(BAD);
+    // What the press reads is the mark, not what the question was doing: a dot
+    // can stand unnamed whether or not a source of its own was refused first.
+    expect(dotsOn()).toHaveLength(1);
+    expect(dotLabelsOn()).toHaveLength(0);
+    expect(bar().querySelector("input")?.value).toBe("");
     await giveUp();
   });
 });
@@ -493,6 +501,90 @@ describe("correcting a dot's source", () => {
 
     expect(dotLabelsOn()).toHaveLength(1);
     expect(refusalText()).toBe("");
+  });
+});
+
+describe("a press elsewhere while a term-dot is being named", () => {
+  it("gives up on the name and begins the next gesture in the same press", async () => {
+    await makeBox([40, 40], [240, 140]);
+    dragOut(100, 100, 100, 100);
+
+    // One press, doing both: the dot is given up on and the drag it began is
+    // under way, where Escape and a press would have been two.
+    dragOut(400, 400, 500, 500);
+    submit("B");
+
+    await vi.waitFor(() => expect(boxesOn()).toHaveLength(2));
+  });
+
+  it("leaves that gesture the canvas: the naming it displaced ends nothing", async () => {
+    await makeBox([40, 40], [240, 140]);
+    dragOut(100, 100, 100, 100);
+
+    dragOut(400, 400, 500, 500);
+    await settled();
+
+    // The naming given up on has come back by now, and the rectangle standing is
+    // the one the press that displaced it swept — the mark the bar is asking
+    // about. Ending its gesture would have taken that down.
+    expect(canvas.querySelector("g.chrome > rect")).not.toBeNull();
+    expect(barOn()).not.toBeNull();
+    await giveUp();
+  });
+
+  it("leaves the dot given up on where it was, unnamed", async () => {
+    await makeBox([40, 40], [240, 140]);
+    dragOut(100, 100, 150, 120);
+
+    dragOut(400, 400, 500, 500);
+
+    expect(centresOf()).toEqual([["150", "-120"]]);
+    expect(dotLabelsOn()).toHaveLength(0);
+    await giveUp();
+  });
+});
+
+describe("a press elsewhere while a box is being named", () => {
+  it("is refused: the bar moves, keeps its source, and keeps asking", async () => {
+    dragOut(40, 40, 240, 140);
+    await refuseSource();
+
+    dragOut(400, 400, 500, 500);
+
+    // The swing is the whole of the answer, and nothing else changed: the one
+    // bar is still asking, holding the source and the reason it was refused.
+    expect(bar().classList.contains("press-refused")).toBe(true);
+    expect(document.querySelectorAll(".naming-bar")).toHaveLength(1);
+    expect(bar().querySelector("input")?.value).toBe(BAD);
+    expect(barReason()).toMatch(/undefined control sequence/iu);
+    await giveUp();
+  });
+
+  it("begins no gesture: the rectangle being asked about is the only one", async () => {
+    dragOut(40, 40, 240, 140);
+    const rectangle = extentOf(
+      canvas.querySelector<SVGRectElement>("g.chrome > rect") ?? undefined,
+    );
+
+    dragOut(400, 400, 500, 500);
+
+    // A gesture had it begun would have dragged the provisional rectangle out
+    // to the new drag, and its release would have asked about a second box.
+    expect(extentOf(canvas.querySelector<SVGRectElement>("g.chrome > rect") ?? undefined)).toEqual(
+      rectangle,
+    );
+    expect(boxesOn()).toHaveLength(0);
+    await giveUp();
+  });
+
+  it("leaves Escape the way out, and gives up on the box for good", async () => {
+    dragOut(40, 40, 240, 140);
+    dragOut(400, 400, 500, 500);
+
+    await giveUp();
+
+    expect(boxesOn()).toHaveLength(0);
+    expect(canvas.querySelector("g.chrome")).toBeNull();
   });
 });
 

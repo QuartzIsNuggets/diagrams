@@ -11,7 +11,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Source } from "./diagram";
-import { askForSource } from "./naming-bar";
+import { askForSource, pressElsewhere } from "./naming-bar";
+import type { PagePoint } from "./render-svg";
 
 const LATEX = "\\Sigma_{(x:A)} P(x)";
 
@@ -46,9 +47,28 @@ function under(): boolean {
   return bar().classList.contains("under-mark");
 }
 
+/** Whether the bar is mid-swing, which is how it refuses a press. */
+function swinging(): boolean {
+  return bar().classList.contains("press-refused");
+}
+
 /** A vetting that takes every source: what a working backend does. */
 function takes(source: Source): Promise<Source> {
   return Promise.resolve(source);
+}
+
+/**
+ * Ask about a mark that can stand unnamed.
+ *
+ * Which naming a question is about decides one thing only — what an incidental
+ * press does to it — so it is named where that is what is being tested and this
+ * stands for it everywhere else.
+ */
+function ask<Vetted>(
+  at: PagePoint,
+  vet: (source: Source) => Promise<Vetted>,
+): Promise<Vetted | undefined> {
+  return askForSource(at, "optional", vet);
 }
 
 /** A vetting that refuses the first `refusals` sources it is handed. */
@@ -135,7 +155,7 @@ describe("the page while nothing is being named", () => {
   });
 
   it("holds none again once a question has been answered", async () => {
-    const asked = askForSource(AT, takes);
+    const asked = ask(AT, takes);
 
     submit(LATEX);
     await asked;
@@ -144,7 +164,7 @@ describe("the page while nothing is being named", () => {
   });
 
   it("holds none again once a question has been given up on", async () => {
-    const asked = askForSource(AT, takes);
+    const asked = ask(AT, takes);
 
     press("Escape");
     await asked;
@@ -153,7 +173,7 @@ describe("the page while nothing is being named", () => {
   });
 
   it("holds none again after a refusal the question was corrected through", async () => {
-    const asked = askForSource(AT, refusing(1));
+    const asked = ask(AT, refusing(1));
     submit(LATEX);
     await settled();
 
@@ -166,7 +186,7 @@ describe("the page while nothing is being named", () => {
 
 describe("the bar a question summons", () => {
   it("arrives at the mark, ready to be typed into", () => {
-    void askForSource(AT, takes);
+    void ask(AT, takes);
 
     // Above the mark and standing clear of it: the tail spans the gap, so the
     // bar's bottom edge is a standoff up from the point and its middle is over
@@ -181,7 +201,7 @@ describe("the bar a question summons", () => {
   });
 
   it("offers a text input and nothing to press", () => {
-    void askForSource(AT, takes);
+    void ask(AT, takes);
 
     expect(input().type).toBe("text");
     expect(input().getAttribute("aria-label")).toBeTruthy();
@@ -191,7 +211,7 @@ describe("the bar a question summons", () => {
   });
 
   it("has a line for a refused source before it has one to refuse", () => {
-    void askForSource(AT, takes);
+    void ask(AT, takes);
 
     const line = bar().querySelector(".naming-error");
     expect(line?.getAttribute("role")).toBe("alert");
@@ -202,7 +222,7 @@ describe("the bar a question summons", () => {
   });
 
   it("does not navigate away when submitted", () => {
-    void askForSource(AT, takes);
+    void ask(AT, takes);
     const event = new Event("submit", { bubbles: true, cancelable: true });
 
     bar().dispatchEvent(event);
@@ -216,7 +236,7 @@ const HIGH = { left: 300, top: STANDOFF + HEIGHT - 1 };
 
 describe("the side of the mark the bar takes", () => {
   it("is the other one where it cannot stand above, tail with it", () => {
-    void askForSource(HIGH, takes);
+    void ask(HIGH, takes);
 
     // Hung by its top edge now, which is the edge the tail is on, so the same
     // standoff is measured the other way and a refusal grows it downward.
@@ -226,7 +246,7 @@ describe("the side of the mark the bar takes", () => {
   });
 
   it("puts the refusal line below the input there, away from the mark", () => {
-    void askForSource(HIGH, takes);
+    void ask(HIGH, takes);
 
     // Same tree either way — the stylesheet reads the side and reverses the
     // column, so the line is on the input's far side from the mark whichever
@@ -240,7 +260,7 @@ describe("the room the bar's body finds along an edge", () => {
   it("shifts it inside the window, the tail sliding to keep pointing", () => {
     const near = { left: 40, top: 200 };
 
-    void askForSource(near, takes);
+    void ask(near, takes);
 
     // Centred would have hung it off the left edge, so the body sits flush
     // against it and the tail moves to where the mark is along that edge.
@@ -251,14 +271,14 @@ describe("the room the bar's body finds along an edge", () => {
   it("shifts it at the other edge too", () => {
     const near = { left: window.innerWidth - 40, top: 200 };
 
-    void askForSource(near, takes);
+    void ask(near, takes);
 
     expect(bar().style.left).toBe(`${String(window.innerWidth - WIDTH)}px`);
     expect(tailAt()).toBe(`${String(WIDTH - 40)}px`);
   });
 
   it("stops the tail short of a corner, a mark that extreme being off the edge", () => {
-    void askForSource({ left: 2, top: 200 }, takes);
+    void ask({ left: 2, top: 200 }, takes);
 
     expect(bar().style.left).toBe("0px");
     expect(tailAt()).toBe(`${String(TAIL_INSET)}px`);
@@ -270,7 +290,7 @@ describe("the room the bar's body finds along an edge", () => {
     document.body.append(controls);
     const corner = { left: window.innerWidth - WIDTH / 2, top: 200 };
 
-    void askForSource(corner, takes);
+    void ask(corner, takes);
 
     // Placed on its mark as if the corner were empty: the bar is transient and
     // is the thing being answered, so it is the control that is sat over.
@@ -281,7 +301,7 @@ describe("the room the bar's body finds along an edge", () => {
 
 describe("asking for a source", () => {
   it("answers with what the vetting made of the source", async () => {
-    const asked = askForSource(AT, (source) => Promise.resolve(source.length));
+    const asked = ask(AT, (source) => Promise.resolve(source.length));
 
     submit(LATEX);
 
@@ -289,7 +309,7 @@ describe("asking for a source", () => {
   });
 
   it("vets the source typed, never what it would typeset to", async () => {
-    const asked = askForSource(AT, takes);
+    const asked = ask(AT, takes);
 
     submit(`  ${LATEX}  `);
 
@@ -297,7 +317,7 @@ describe("asking for a source", () => {
   });
 
   it("vets nothing until there is something typed to vet", async () => {
-    const asked = askForSource(AT, () => Promise.reject(new Error("asked anyway")));
+    const asked = ask(AT, () => Promise.reject(new Error("asked anyway")));
 
     submit("   ");
 
@@ -305,11 +325,11 @@ describe("asking for a source", () => {
   });
 
   it("opens from nothing typed, the bar holding a question being a new one", async () => {
-    const asked = askForSource(AT, takes);
+    const asked = ask(AT, takes);
     submit(LATEX);
     await asked;
 
-    void askForSource(AT, takes);
+    void ask(AT, takes);
 
     expect(input().value).toBe("");
   });
@@ -317,7 +337,7 @@ describe("asking for a source", () => {
 
 describe("a source the vetting refuses", () => {
   it("leaves the bar hung at its mark, holding that source", async () => {
-    void askForSource(AT, refusing(1));
+    void ask(AT, refusing(1));
 
     submit(LATEX);
     await settled();
@@ -336,7 +356,7 @@ describe("a source the vetting refuses", () => {
   it("does not send the bar to the other side of its mark", async () => {
     // Standing above its mark by exactly nothing to spare.
     const tight = { left: 300, top: STANDOFF + HEIGHT };
-    void askForSource(tight, refusing(1));
+    void ask(tight, refusing(1));
     // The reason's line, arriving: a bar choosing its side again now would find
     // no room above and flip under the mark being read.
     vi.spyOn(HTMLFormElement.prototype, "getBoundingClientRect").mockReturnValue(
@@ -351,7 +371,7 @@ describe("a source the vetting refuses", () => {
   });
 
   it("puts the reason on the line above the input, naming no source", async () => {
-    void askForSource(AT, refusing(1));
+    void ask(AT, refusing(1));
 
     submit(LATEX);
     await settled();
@@ -363,7 +383,7 @@ describe("a source the vetting refuses", () => {
 
 describe("correcting a source the vetting refused", () => {
   it("is retried by submitting again, and answers with the one that is taken", async () => {
-    const asked = askForSource(AT, refusing(1));
+    const asked = ask(AT, refusing(1));
     submit(LATEX);
     await settled();
 
@@ -373,7 +393,7 @@ describe("correcting a source the vetting refused", () => {
   });
 
   it("is given up on by Escape as readily as a fresh one", async () => {
-    const asked = askForSource(AT, refusing(1));
+    const asked = ask(AT, refusing(1));
     submit(LATEX);
     await settled();
 
@@ -383,7 +403,7 @@ describe("correcting a source the vetting refused", () => {
   });
 
   it("is given up on by a submit emptied back out, there being nothing to name", async () => {
-    const asked = askForSource(AT, refusing(1));
+    const asked = ask(AT, refusing(1));
     submit(LATEX);
     await settled();
 
@@ -395,7 +415,7 @@ describe("correcting a source the vetting refused", () => {
 
 describe("giving up on a question", () => {
   it("answers with nothing at all on Escape", async () => {
-    const asked = askForSource(AT, takes);
+    const asked = ask(AT, takes);
 
     press("Escape");
 
@@ -403,7 +423,7 @@ describe("giving up on a question", () => {
   });
 
   it("answers the same for a submit with nothing in it, there being nothing to name", async () => {
-    const asked = askForSource(AT, takes);
+    const asked = ask(AT, takes);
 
     submit("   ");
 
@@ -412,7 +432,7 @@ describe("giving up on a question", () => {
 
   it("is not undone by a vetting that lands afterwards", async () => {
     let take: ((source: Source) => void) | undefined;
-    const asked = askForSource(
+    const asked = ask(
       AT,
       () =>
         new Promise<Source>((resolve) => {
@@ -427,27 +447,106 @@ describe("giving up on a question", () => {
     await expect(asked).resolves.toBeUndefined();
     // The next question has a bar of its own, and a source nobody is waiting on
     // may not take it off the page or answer with what is being typed into it.
-    void askForSource(AT, takes);
+    void ask(AT, takes);
     input().value = "B";
     await settled();
     expect(input().value).toBe("B");
   });
 });
 
+describe("a press elsewhere while a mark that can stand unnamed is being named", () => {
+  it("gives up on the question and lets the press go on", async () => {
+    const asked = ask(AT, takes);
+
+    expect(pressElsewhere()).toBe("goes-on");
+
+    await expect(asked).resolves.toBeUndefined();
+    expect(barOn()).toBeNull();
+  });
+
+  it("gives up on a refused source as readily, the mark standing unnamed either way", async () => {
+    const asked = ask(AT, refusing(1));
+    submit(LATEX);
+    await settled();
+
+    expect(pressElsewhere()).toBe("goes-on");
+
+    await expect(asked).resolves.toBeUndefined();
+  });
+});
+
+describe("a press elsewhere while a mark that is its label is being named", () => {
+  it("is refused: the question stays open, holding its source, and the bar swings", async () => {
+    const asked = askForSource(AT, "required", refusing(1));
+    submit(LATEX);
+    await settled();
+
+    expect(pressElsewhere()).toBe("refused");
+
+    expect(swinging()).toBe(true);
+    expect(input().value).toBe(LATEX);
+    expect(reasonText()).toBe(WHY);
+    // Still asking: nothing has been answered, and Escape is still the way out.
+    press("Escape");
+    await expect(asked).resolves.toBeUndefined();
+  });
+
+  it("swings again for the press after, the swing being a thing that happened", () => {
+    void askForSource(AT, "required", takes);
+
+    pressElsewhere();
+    // A bare Event: jsdom animates nothing and has no AnimationEvent to raise,
+    // and what the bar reads of one is that it ended.
+    bar().dispatchEvent(new Event("animationend"));
+    expect(swinging()).toBe(false);
+    pressElsewhere();
+
+    expect(swinging()).toBe(true);
+  });
+
+  it("is done saying so when an animation inside the bar ends, not only one on it", () => {
+    void askForSource(AT, "required", takes);
+
+    pressElsewhere();
+    // What a reader who wants no motion gets is colour run over the input's
+    // edge rather than a swing of the bar, so the animation that ends is the
+    // input's and the bar hears it by bubbling. A refusal that ended on
+    // nothing would leave the class on and swallow every press after it.
+    input().dispatchEvent(new Event("animationend", { bubbles: true }));
+
+    expect(swinging()).toBe(false);
+  });
+
+  it("is what Escape is not: that gives up on a required naming too", async () => {
+    const asked = askForSource(AT, "required", takes);
+
+    press("Escape");
+
+    await expect(asked).resolves.toBeUndefined();
+    expect(barOn()).toBeNull();
+  });
+});
+
+describe("a press elsewhere while nothing is being named", () => {
+  it("is free to go on, there being no question for it to be incidental to", () => {
+    expect(pressElsewhere()).toBe("goes-on");
+  });
+});
+
 describe("a second question asked while one is open", () => {
   it("leaves one bar on the page, the one asking about the newer mark", () => {
-    void askForSource(AT, takes);
+    void ask(AT, takes);
 
-    void askForSource({ left: 500, top: 400 }, takes);
+    void ask({ left: 500, top: 400 }, takes);
 
     expect(document.querySelectorAll(".naming-bar")).toHaveLength(1);
     expect(bar().style.bottom).toBe(`${String(window.innerHeight - 400 + STANDOFF)}px`);
   });
 
   it("gives up on the one it displaced, rather than leaving it unanswered", async () => {
-    const first = askForSource(AT, takes);
+    const first = ask(AT, takes);
 
-    void askForSource(AT, takes);
+    void ask(AT, takes);
 
     await expect(first).resolves.toBeUndefined();
   });

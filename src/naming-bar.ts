@@ -9,13 +9,13 @@
 // on the page for exactly as long as it is asking, so this module both raises it
 // and takes it away: nobody else has a bar to hold.
 
-import type { Source } from "./diagram";
+import type { Naming, Source } from "./diagram";
 import { messageOf } from "./failure";
 import type { PagePoint } from "./render-svg";
 
 /**
- * The question on the page: the bar it is being asked through, and what it does
- * with a source typed into it.
+ * The question on the page: the bar it is being asked through, whether the mark
+ * it is about can stand unnamed, and what it does with a source typed into it.
  *
  * There is one of these at a time, so there is at most one outstanding question
  * — but that question takes as many `answer`s as it needs, every refused source
@@ -25,6 +25,7 @@ import type { PagePoint } from "./render-svg";
  */
 interface Question {
   readonly form: HTMLFormElement;
+  readonly naming: Naming;
   readonly answer: (source: Source) => void;
 }
 
@@ -43,16 +44,18 @@ let open: Question | undefined;
  * left in place to be corrected and Enter pressed again to retry.
  *
  * Resolves with whatever `vet` handed back, and with nothing at all where the
- * question was given up on: Escape, and equally a submit with nothing in it,
- * there being nothing to name. Those two roads are the whole of how a naming
- * ends, and either way the bar goes — which is what makes every question start
- * from nothing typed, there being no input left over to carry a source into the
- * next one.
+ * question was given up on: Escape, a submit with nothing in it, there being
+ * nothing to name, and — where `naming` is optional — a press elsewhere, handed
+ * on by whoever caught it. Those roads are the whole of how a naming ends, and
+ * either way the
+ * bar goes — which is what makes every question start from nothing typed, there
+ * being no input left over to carry a source into the next one.
  *
  * A question asked while one is open gives up on that one first: one bar, so a
- * second would be a second place a source could be typed. Callers do not lean on
- * this — the editor starts no gesture while a naming is open — it is what keeps
- * the rule true rather than assumed.
+ * second would be a second place a source could be typed. The gesture that would
+ * ask a second has given up on the first through {@link pressElsewhere} by the
+ * time it lands, so nothing reaches this — it keeps the rule true rather than
+ * assumed.
  *
  * The bar is asking before the caller has the promise back — a gesture is what
  * summons it, and the release that started that gesture is a plausible moment
@@ -60,6 +63,7 @@ let open: Question | undefined;
  */
 export async function askForSource<Vetted>(
   at: PagePoint,
+  naming: Naming,
   vet: (source: Source) => Promise<Vetted>,
 ): Promise<Vetted | undefined> {
   open?.answer("");
@@ -91,9 +95,46 @@ export async function askForSource<Vetted>(
       }
     };
 
-    open = { form, answer };
+    open = { form, naming, answer };
     enableAnswering(form, input);
   });
+}
+
+/**
+ * Put a press the caller reads as landing away from the bar to the open
+ * question, and hand back what becomes of that press.
+ *
+ * The other way of giving up, and the one that does not work everywhere.
+ * Escape is *asked for* and gives up on any naming; a press elsewhere is
+ * *incidental*, so it is honoured only where nothing is lost by honouring it —
+ * the mark can stand unnamed, the name is given up on, and the press goes on to
+ * start whatever gesture it began, which is what makes putting down the next
+ * mark one press rather than Escape and a press. Where the mark **is** its
+ * label the press is refused instead, the question staying open with its source
+ * in it while the bar says no by moving. Which of the two it is comes off the
+ * {@link Naming} the question was asked with, this reading nothing else about
+ * the mark.
+ *
+ * It answers rather than reports: a press it hands back `goes-on` has been given
+ * up on already, and one it refuses has set the bar swinging. So a caller that
+ * asks and then ignores the answer has still ended a naming.
+ *
+ * A press while nothing is being named goes on: there is no question for it to
+ * be incidental to.
+ */
+export function pressElsewhere(): "goes-on" | "refused" {
+  if (!open) {
+    return "goes-on";
+  }
+  if (open.naming === "required") {
+    // Put back on by the next refused press, the swing having taken it off as
+    // it ended. A press *during* a swing adds a class already there and changes
+    // nothing, the bar being mid-refusal at that moment anyway.
+    open.form.classList.add("press-refused");
+    return "refused";
+  }
+  open.answer("");
+  return "goes-on";
 }
 
 /** A bar on the page, and the two parts of it a question needs to reach. */
@@ -175,6 +216,17 @@ function raise(at: PagePoint): Bar {
   const reason = document.createElement("p");
   reason.classList.add("naming-error");
   reason.setAttribute("role", "alert");
+
+  // The swing a refused press is answered with runs off a class, and the class
+  // comes off as the swing ends so the next one can put it back: an animation
+  // is a thing that happened rather than a state the bar is in. Which is why
+  // the stylesheet answers a reader who wants no motion with another animation
+  // rather than with none — one that never runs never ends, and the class would
+  // stick and swallow every press after it. Listened for on the bar, so an
+  // animation on anything it holds ends here too.
+  form.addEventListener("animationend", () => {
+    form.classList.remove("press-refused");
+  });
 
   form.append(reason, input);
   document.body.append(form);

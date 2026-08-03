@@ -70,6 +70,19 @@ type BothOrNeither<T> = T | { readonly [K in keyof T]?: undefined };
 /** The LaTeX a label is typeset from. */
 export type Source = string;
 
+/**
+ * Whether a mark can stand unnamed.
+ *
+ * Required exactly where the mark **is** its label — a box is its type
+ * expression and a built-in rule is the rule it names, so an unnamed one is no
+ * mark at all rather than a mark that lost its name — and optional everywhere
+ * else: a term stands unnamed, and a path asserts its equality without being
+ * named. Written on the naming rather than on the sort of thing being named, so
+ * whatever asks for a source says which it is and every rule that turns on the
+ * answer covers a kind drawable later without being extended.
+ */
+export type Naming = "required" | "optional";
+
 /** Where a box's label sits: the six slots, written as the product they are. */
 export type LabelSlot = `${"top" | "bottom"}-${"left" | "center" | "right"}`;
 

@@ -10,7 +10,7 @@
 
 import type { Diagram, DotId, Extent, Point, Refusal } from "./diagram";
 import { addBox, addDot, boxAt, EMPTY_DIAGRAM, labelDot } from "./diagram";
-import { askForSource } from "./naming-bar";
+import { askForSource, pressElsewhere } from "./naming-bar";
 import type { Unset } from "./render-svg";
 import {
   clearChrome,
@@ -94,15 +94,20 @@ function unsetWording(unset: readonly Unset[]): string {
  * refusal is put.
  *
  * The one mutable thing the editor has. `current` is the document — every mark
- * on the canvas is there because it holds one — and `naming` says whether a bar
- * is already asking about a mark, since a second question would throw away the
- * first's typed source.
+ * on the canvas is there because it holds one — and `gestures` counts the ones
+ * that have begun, which is an identity rather than a tally: a press elsewhere
+ * gives up on an optional naming *and* begins a gesture, so the naming it
+ * displaced comes back to an editor the next gesture is already drawing into,
+ * and the count is how it is told it is no longer the one on the canvas.
+ *
+ * Nothing here says whether a bar is asking. There is one bar and it is the bar
+ * that knows, so a second copy of that fact would be one to keep in step.
  */
 interface Shell {
   readonly canvas: SVGSVGElement;
   readonly refusal: HTMLParagraphElement;
   current: Diagram;
-  naming: boolean;
+  gestures: number;
 }
 
 /**
@@ -141,16 +146,26 @@ async function settle(shell: Shell): Promise<void> {
  * neither is a refusal — the source that would have been one never got past the
  * bar. So the region is emptied either way, a message standing for the last
  * attempt and this being it.
+ *
+ * A naming a press gave up on ends nothing at all. The press that gave up on it
+ * began a gesture of its own, which is drawing into the same editor by the time
+ * this comes back — so the rectangle to take down, the region to empty and the
+ * diagram to hold are all that gesture's now, and a naming that is no longer the
+ * one on the canvas would be undoing them.
  */
 async function named(shell: Shell, naming: Promise<Diagram>): Promise<void> {
-  shell.current = await naming;
+  const gesture = shell.gestures;
+  const next = await naming;
+  if (shell.gestures !== gesture) {
+    return;
+  }
+  shell.current = next;
   draw(shell);
   shell.refusal.textContent = "";
   // The gesture is over: any rectangle it drew goes, and the next press is free
   // to start another. Not before — a rectangle is the mark its question is
   // about, so it stands as long as the bar is still asking about it.
   clearChrome(shell.canvas);
-  shell.naming = false;
 }
 
 /**
@@ -166,7 +181,6 @@ async function nameDot(shell: Shell, at: Point): Promise<void> {
   const placed = addDot(shell.current, at);
   if (typeof placed === "string") {
     shell.refusal.textContent = REFUSALS[placed];
-    shell.naming = false;
     return;
   }
   shell.current = placed.diagram;
@@ -185,29 +199,30 @@ async function nameDot(shell: Shell, at: Point): Promise<void> {
  * extents it holds rather than from anything drawn. What the press settled on is
  * kept in `making` until the release places it.
  *
- * A press while a question is open starts nothing: one bar holds one question,
- * and a press that quietly cancelled it would throw away a typed source.
+ * A press while a question is open is the bar's to answer rather than this
+ * shell's, and what comes back is whether there is a gesture in it: the shell
+ * knows a press it may not go on with, and not what was said to it.
  *
  * The shell comes back so what is on screen can be read out of it.
  */
 function enableDrawing(canvas: SVGSVGElement, refusal: HTMLParagraphElement): Shell {
-  const shell: Shell = { canvas, refusal, current: EMPTY_DIAGRAM, naming: false };
+  const shell: Shell = { canvas, refusal, current: EMPTY_DIAGRAM, gestures: 0 };
   let making: "box" | "dot" = "box";
   draw(shell);
 
   enableDragging(
     canvas,
     (at) => {
-      if (shell.naming) {
+      if (pressElsewhere() === "refused") {
         return "no-gesture";
       }
+      shell.gestures += 1;
       making = boxAt(shell.current, at) ? "dot" : "box";
       // A dot has no extent to show: a rectangle following the pointer would
       // say a box was coming.
       return making === "box" ? "rectangle" : "nothing";
     },
     (drag, at) => {
-      shell.naming = true;
       void (making === "box" ? named(shell, boxFrom(shell, drag)) : nameDot(shell, at));
     },
   );
@@ -224,12 +239,15 @@ function enableDrawing(canvas: SVGSVGElement, refusal: HTMLParagraphElement): Sh
  * vets its source — a floor is what the drawing needs anyway, and a source that
  * has none is a source this backend will not set — so the bar keeps asking until
  * one comes back and nothing unmeasurable ever reaches a box.
+ *
+ * The naming is a required one, a box being its type expression: a press
+ * elsewhere is refused rather than taking the rectangle down.
  */
 async function boxFrom(shell: Shell, drag: Extent): Promise<Diagram> {
   // At the label slot a new box takes, so a source is typed where the label it
   // becomes will be.
   const slot = toPagePoint(shell.canvas, { x: drag.x, y: drag.y + drag.h / 2 });
-  const box = await askForSource(slot, async (source) => {
+  const box = await askForSource(slot, "required", async (source) => {
     const floor = await measureBox(source);
     return {
       source,
@@ -251,9 +269,12 @@ async function boxFrom(shell: Shell, drag: Extent): Promise<Diagram> {
  * the backend's own. A dot has no extent to floor, so the source is vetted for
  * its own sake and the bar keeps asking until one sets — the dot standing
  * unnamed meanwhile, which it may do for good if the question is given up on.
+ *
+ * The naming is an optional one, a dot standing whether or not it is named: a
+ * press elsewhere gives up on it and puts down the next mark in the same press.
  */
 async function dotNamed(shell: Shell, dot: DotId, at: Point): Promise<Diagram> {
-  const vetted = await askForSource(toPagePoint(shell.canvas, at), async (source) => {
+  const vetted = await askForSource(toPagePoint(shell.canvas, at), "optional", async (source) => {
     await vetSource(source);
     return source;
   });
