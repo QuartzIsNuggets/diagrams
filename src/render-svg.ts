@@ -12,8 +12,9 @@
 // walls are ink rather than meaning, and the TikZ emitter will pick its own.
 
 import { SVG_NS } from "./canvas";
-import type { Box, Diagram, Dot, Extent, Point, Source } from "./diagram";
+import type { Box, Diagram, Dot, DotSide, Extent, Point, Source } from "./diagram";
 import { DOT_SEPARATION, dotsIn, placeOf } from "./diagram";
+import { messageOf } from "./failure";
 import { BOX_INK, INK } from "./palette";
 import type { GlyphRun } from "./typesetting";
 import { typesetLatex, UNITS_PER_EM } from "./typesetting";
@@ -23,6 +24,15 @@ const LABEL_EM = 24;
 
 /** Room a label is given inside a box's walls, in diagram units. */
 const LABEL_PADDING = 8;
+
+/**
+ * Room a term-dot's label keeps clear of the dot it names, in diagram units.
+ *
+ * Measured from the dot's edge rather than its centre, so a label stands the
+ * same distance off however much ink a dot is drawn with. This backend's own,
+ * the model naming no size for a dot and no distance for its label.
+ */
+const DOT_LABEL_GAP = 4;
 
 /** How thick a box's wall is drawn, in diagram units. */
 const BOX_STROKE = 2;
@@ -107,19 +117,23 @@ function drawBox(box: Box, dots: readonly Dot[]): SVGGElement {
   walls.setAttribute("stroke-width", String(BOX_STROKE));
   group.append(walls);
 
-  const label = drawLabel(box);
-  if (label) {
-    group.append(label);
+  const boxLabel = drawLabel(box.source, boxLabelOrigin(box), "box-label", BOX_INK);
+  if (boxLabel) {
+    group.append(boxLabel);
   }
   for (const dot of dots) {
-    group.append(drawDot(box, dot));
+    const at = placeOf(box, dot);
+    group.append(drawDot(at));
+    const dotLabel = drawDotLabel(dot, at);
+    if (dotLabel) {
+      group.append(dotLabel);
+    }
   }
   return group;
 }
 
 /** A term-dot: the `<circle>` standing for a term, where the model puts it. */
-function drawDot(box: Box, dot: Dot): SVGCircleElement {
-  const at = placeOf(box, dot);
+function drawDot(at: Point): SVGCircleElement {
   const mark = document.createElementNS(SVG_NS, "circle");
   mark.classList.add("term-dot");
   mark.setAttribute("cx", String(at.x));
@@ -130,28 +144,49 @@ function drawDot(box: Box, dot: Dot): SVGCircleElement {
 }
 
 /**
- * A box's label, or nothing where its source has never been typeset.
+ * A term-dot's own label, or nothing where it has never been named — a dot
+ * carries its source and its side together or not at all, which is what makes
+ * "unnamed" one state rather than two.
+ */
+function drawDotLabel(dot: Dot, at: Point): SVGGElement | undefined {
+  const { source, labelSide } = dot;
+  return source === undefined || labelSide === undefined
+    ? undefined
+    : drawLabel(source, dotLabelOrigin(at, labelSide), "dot-label", INK);
+}
+
+/**
+ * The label `source` was set to, put where `origin` says — or nothing, where it
+ * has not been set.
  *
  * Drawing is synchronous and typesetting is not, so a label can only be drawn
- * from a run already measured — which every source a gesture put there is, the
- * gesture having had to measure it to floor the box. A source this backend
- * cannot draw is exactly the one that is never measured, and drawn unlabelled
- * is what it is meant to look like.
+ * from a run already set. Everything a gesture put in the diagram is: nothing
+ * enters by being typed until this backend has set it. What is left is a source
+ * read from a file and not yet set, or one that would not set at all, and drawn
+ * unlabelled is what both are meant to look like.
+ *
+ * `origin` is asked for the run because where a label goes depends on how big
+ * it is, and only a run already in hand can say.
  */
-function drawLabel(box: Box): SVGGElement | undefined {
-  const run = measured.get(box.source);
-  if (!run) {
+function drawLabel(
+  source: Source,
+  origin: (run: GlyphRun) => Point,
+  className: string,
+  ink: string,
+): SVGGElement | undefined {
+  const run = runs.get(source);
+  if (run === undefined || run instanceof Error) {
     return undefined;
   }
 
   const label = document.createElementNS(SVG_NS, "g");
-  label.classList.add("box-label");
-  label.setAttribute("color", BOX_INK);
-  // A copy: the cache holds one run however many boxes are set from it, and a
+  label.classList.add(className);
+  label.setAttribute("color", ink);
+  // A copy: the cache holds one run however many labels are set from it, and a
   // node can only be in one place.
   label.append(run.glyphs.cloneNode(true));
 
-  const at = labelOrigin(box, run);
+  const at = origin(run);
   const scale = LABEL_EM / UNITS_PER_EM;
   // Flipped back: glyph geometry expects the y-down frame it was made in, so
   // inside a y-up diagram it is turned the right way up again here.
@@ -169,31 +204,152 @@ function drawLabel(box: Box): SVGGElement | undefined {
  * the same room the box was floored to hold — so a box is never too small for
  * its own label, whichever of the six slots it takes.
  */
-function labelOrigin(box: Box, run: GlyphRun): Point {
-  const width = toUnits(run.width);
-  const left = box.x - box.w / 2 + LABEL_PADDING;
-  const right = box.x + box.w / 2 - LABEL_PADDING;
+function boxLabelOrigin(box: Box): (run: GlyphRun) => Point {
+  return (run) => {
+    const width = toUnits(run.width);
+    const left = box.x - box.w / 2 + LABEL_PADDING;
+    const right = box.x + box.w / 2 - LABEL_PADDING;
 
-  const x = box.labelSlot.endsWith("left")
-    ? left
-    : box.labelSlot.endsWith("right")
-      ? right - width
-      : box.x - width / 2;
-  const y = box.labelSlot.startsWith("top")
-    ? box.y + box.h / 2 - LABEL_PADDING - toUnits(run.ascent)
-    : box.y - box.h / 2 + LABEL_PADDING + toUnits(run.depth);
-  return { x, y };
+    const x = box.labelSlot.endsWith("left")
+      ? left
+      : box.labelSlot.endsWith("right")
+        ? right - width
+        : box.x - width / 2;
+    const y = box.labelSlot.startsWith("top")
+      ? box.y + box.h / 2 - LABEL_PADDING - toUnits(run.ascent)
+      : box.y - box.h / 2 + LABEL_PADDING + toUnits(run.depth);
+    return { x, y };
+  };
 }
 
 /**
- * What each source typeset to.
+ * Where the run's left baseline point goes, for the side of the dot its label
+ * takes.
+ *
+ * A dot is a point with no direction of its own, so the four sides are
+ * absolute. Beside the dot the run is centred on the dot's own line — between
+ * the top of its tallest glyph and the bottom of its deepest, rather than on
+ * the baseline, which would sit a subscript's descender across the dot; above
+ * or below it is centred across the dot and cleared by the edge the glyphs
+ * would meet. The dot's own ink is what is cleared, {@link DOT_LABEL_GAP} being
+ * the room kept beyond it.
+ */
+function dotLabelOrigin(at: Point, side: DotSide): (run: GlyphRun) => Point {
+  return (run) => {
+    const clear = DOT_RADIUS + DOT_LABEL_GAP;
+    const middle = at.y - (toUnits(run.ascent) - toUnits(run.depth)) / 2;
+    switch (side) {
+      case "left":
+        return { x: at.x - clear - toUnits(run.width), y: middle };
+      case "right":
+        return { x: at.x + clear, y: middle };
+      case "above":
+        return { x: at.x - toUnits(run.width) / 2, y: at.y + clear + toUnits(run.depth) };
+      case "below":
+        return { x: at.x - toUnits(run.width) / 2, y: at.y - clear - toUnits(run.ascent) };
+    }
+  };
+}
+
+/**
+ * What each source has been set to: its glyph run, or the refusal there was
+ * instead.
  *
  * The backend owns typesetting and its cache, with nothing injected into the
  * model. A redraw rebuilds every label, so without this the engine would run
- * once per box per frame; and a gesture measures a source before there is a box
- * to draw it in, so the run is already here by the time anything draws it.
+ * once per label per frame — and a source that will not set is remembered as
+ * such for the same reason, or every redraw would retry it and report it again.
+ * The refusal is kept as the refusal rather than as a note about one, so
+ * whoever asks next is told exactly what the first caller was.
  */
-const measured = new Map<Source, GlyphRun>();
+const runs = new Map<Source, GlyphRun | Error>();
+
+/** Set `source` now, whatever is remembered of it, and remember what it comes to. */
+async function setNow(source: Source): Promise<GlyphRun | Error> {
+  const settled = await typesetLatex(source).catch(
+    (failure: unknown) => new Error(messageOf(failure)),
+  );
+  runs.set(source, settled);
+  return settled;
+}
+
+/** What `source` came to, setting it if it never has been set before. */
+async function runOf(source: Source): Promise<GlyphRun | Error> {
+  return runs.get(source) ?? (await setNow(source));
+}
+
+/**
+ * The run `source` sets to, or a rejection carrying the reason it will not.
+ *
+ * A refusal already remembered is asked *again* rather than replayed, which is
+ * what tells this door from {@link runOf}: someone submitting the same source a
+ * second time is asking for exactly that, and a boot the engine got wrong once
+ * would otherwise leave that source unsettable for the rest of the session. A
+ * redraw asks nothing and takes the remembered answer.
+ */
+async function mustSet(source: Source): Promise<GlyphRun> {
+  const known = runs.get(source);
+  const run = known === undefined || known instanceof Error ? await setNow(source) : known;
+  if (run instanceof Error) {
+    throw run;
+  }
+  return run;
+}
+
+/**
+ * Set `source`, rejecting where this backend cannot.
+ *
+ * The vetting a gesture does before a source enters the diagram: nothing typed
+ * puts a source there that this backend cannot draw, so what is refused stays
+ * in the input to be corrected rather than becoming a mark with no label.
+ *
+ * It hands back nothing. What setting a source produces is glyph geometry, and
+ * that never leaves this backend — the caller asked whether the source can be
+ * drawn, not for the drawing.
+ */
+export async function vetSource(source: Source): Promise<void> {
+  await mustSet(source);
+}
+
+/** A source that would not set, and what the typesetter said of it. */
+export interface Unset {
+  readonly source: Source;
+  readonly why: string;
+}
+
+/**
+ * Set every source in `diagram` that has never been set, and hand back the ones
+ * that would not set.
+ *
+ * Nothing is drawn: what this settles shows on the next redraw, which the
+ * caller owns. For a drawing this editor's own gestures made there is nothing
+ * left to set and nothing to report, every source having been vetted on the way
+ * in — this is the road a diagram nothing here constructed arrives by, whose
+ * LaTeX no form ever saw. Such a source costs its own label and no more: the
+ * box or dot still draws, the source stays in the diagram to be corrected, and
+ * what could not be set is named here.
+ *
+ * Sources are set one after another rather than all at once, so a source two
+ * marks share is set once.
+ */
+export async function setLabelsOf(diagram: Diagram): Promise<readonly Unset[]> {
+  const unset: Unset[] = [];
+  for (const source of sourcesOf(diagram)) {
+    const run = await runOf(source);
+    if (run instanceof Error) {
+      unset.push({ source, why: run.message });
+    }
+  }
+  return unset;
+}
+
+/** Every source the diagram holds a label this backend draws from. */
+function sourcesOf(diagram: Diagram): readonly Source[] {
+  return [
+    ...diagram.boxes.map((box) => box.source),
+    ...diagram.dots.flatMap((dot) => (dot.source === undefined ? [] : [dot.source])),
+  ];
+}
 
 /**
  * The smallest extent a box can hold `source` in.
@@ -203,9 +359,7 @@ const measured = new Map<Source, GlyphRun>();
  * the two ways typesetting can fail stay out here.
  */
 export async function measureBox(source: Source): Promise<Pick<Extent, "w" | "h">> {
-  const known = measured.get(source);
-  const run = known ?? (await typesetLatex(source));
-  measured.set(source, run);
+  const run = await mustSet(source);
   return {
     w: toUnits(run.width) + 2 * LABEL_PADDING,
     h: toUnits(run.ascent + run.depth) + 2 * LABEL_PADDING,

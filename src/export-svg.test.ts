@@ -11,10 +11,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createCanvas, SVG_NS } from "./canvas";
 import type { Diagram, Point } from "./diagram";
-import { addBox, addDot, EMPTY_DIAGRAM } from "./diagram";
+import { addBox, addDot, EMPTY_DIAGRAM, labelDot } from "./diagram";
 import { createExportControls, serializeCanvas } from "./export-svg";
-import { createLabelForm } from "./label-form";
-import { renderDiagram } from "./render-svg";
+import { renderDiagram, setLabelsOf } from "./render-svg";
 import type { OutgoingFile } from "./writer";
 import { writeFile } from "./writer";
 
@@ -47,6 +46,20 @@ function sizeCanvas(width: number, height: number): void {
   canvas.getBoundingClientRect = (): DOMRect => new DOMRect(0, 0, width, height);
 }
 
+/** A box holding a dot at each of `places`, none of them named. */
+function boxOfDots(...places: readonly Point[]): Diagram {
+  return places.reduce<Diagram>(
+    (sofar, at) => {
+      const next = addDot(sofar, at);
+      if (typeof next !== "string") {
+        return next.diagram;
+      }
+      throw new Error(`the diagram refused a dot at (${String(at.x)}, ${String(at.y)}): ${next}`);
+    },
+    addBox(EMPTY_DIAGRAM, { source: "A", x: 200, y: -120, w: 400, h: 300 }),
+  );
+}
+
 /**
  * Draw a box holding a dot at each of `places`.
  *
@@ -55,32 +68,25 @@ function sizeCanvas(width: number, height: number): void {
  * screen genuinely has on it.
  */
 function drawDotsAt(...places: readonly Point[]): void {
-  const diagram = places.reduce<Diagram>(
-    (sofar, at) => {
-      const next = addDot(sofar, at);
-      if (typeof next !== "string") {
-        return next;
-      }
-      throw new Error(`the diagram refused a dot at (${String(at.x)}, ${String(at.y)}): ${next}`);
-    },
-    addBox(EMPTY_DIAGRAM, { source: "A", x: 200, y: -120, w: 400, h: 300 }),
-  );
-  renderDiagram(canvas, diagram);
+  renderDiagram(canvas, boxOfDots(...places));
 }
 
-/** Typeset a label onto the canvas through the real form and pipeline. */
-async function placeLabel(latex: string): Promise<void> {
-  const form = createLabelForm(canvas);
-  document.body.append(form);
-  const before = canvas.querySelectorAll("g.math-label").length;
+/**
+ * Draw a named dot, its label typeset through the real pipeline.
+ *
+ * The one way a typeset label reaches the canvas: a diagram that holds a source
+ * and a backend that has set it.
+ */
+async function drawLabelled(latex: string, ...places: readonly Point[]): Promise<void> {
+  const placed = boxOfDots({ x: 120, y: -45 }, ...places);
+  const dot = placed.dots[0]?.id;
+  if (!dot) {
+    throw new Error("the diagram was drawn with no dot to name");
+  }
+  const diagram = labelDot(placed, dot, latex);
 
-  form.querySelector("input")!.value = latex;
-  form.querySelector<HTMLButtonElement>("button[type=submit]")!.click();
-
-  await vi.waitFor(() => {
-    expect(form.querySelector(".label-error")?.textContent).toBe("");
-    expect(canvas.querySelectorAll("g.math-label")).toHaveLength(before + 1);
-  });
+  expect(await setLabelsOf(diagram)).toEqual([]);
+  renderDiagram(canvas, diagram);
 }
 
 /** Press Export and read back the file the writer was handed. */
@@ -200,7 +206,7 @@ describe("a write the filesystem refuses", () => {
 });
 
 // The message describes the last attempt, so anything the last attempt was
-// other than a failure empties it — the rule `.label-error` follows.
+// other than a failure empties it — the rule `.canvas-error` follows.
 describe("a refusal already on screen", () => {
   it.each([
     ["a completed write", { outcome: "written", path: "/home/somebody/diagram.svg" }],
@@ -273,7 +279,7 @@ describe("what the exported file draws", () => {
   });
 
   it("carries the typeset label as the same glyph paths that are on screen", async () => {
-    await placeLabel(LATEX);
+    await drawLabelled(LATEX);
 
     const onScreen = pathDataOf(canvas);
     expect(onScreen.length).toBeGreaterThan(0);
@@ -281,28 +287,27 @@ describe("what the exported file draws", () => {
   });
 
   it("keeps the label's placement and colour, which page CSS would not travel with", async () => {
-    await placeLabel(LATEX);
+    await drawLabelled(LATEX);
 
-    const label = reopenExport().querySelector("g.math-label");
+    const label = reopenExport().querySelector("g.dot-label");
     expect(label?.getAttribute("transform")).toBe(
-      canvas.querySelector("g.math-label")?.getAttribute("transform"),
+      canvas.querySelector("g.dot-label")?.getAttribute("transform"),
     );
     expect(label?.getAttribute("color")).toBeTruthy();
   });
 
   it("draws dots and label together — the whole canvas, not one kind of mark", async () => {
-    drawDotsAt({ x: 300, y: -200 });
-    await placeLabel(LATEX);
+    await drawLabelled(LATEX, { x: 300, y: -200 });
 
     const exported = reopenExport();
-    expect(exported.querySelectorAll("circle")).toHaveLength(1);
-    expect(exported.querySelectorAll("g.math-label")).toHaveLength(1);
+    expect(exported.querySelectorAll("circle")).toHaveLength(2);
+    expect(exported.querySelectorAll("g.dot-label")).toHaveLength(1);
   });
 });
 
 describe("what the exported file needs from outside", () => {
   it("resolves every glyph inside the file — no <use> into a font cache left behind", async () => {
-    await placeLabel(LATEX);
+    await drawLabelled(LATEX);
 
     const exported = reopenExport();
     expect(exported.querySelectorAll("use")).toHaveLength(0);
@@ -311,8 +316,7 @@ describe("what the exported file needs from outside", () => {
   });
 
   it("holds no element that reaches for something else", async () => {
-    drawDotsAt({ x: 120, y: -45 });
-    await placeLabel(LATEX);
+    await drawLabelled(LATEX);
 
     const exported = reopenExport();
     expect(exported.querySelectorAll("use, image, foreignObject, script, style")).toHaveLength(0);
@@ -324,14 +328,14 @@ describe("what the exported file needs from outside", () => {
   });
 
   it("names no location but the SVG namespace itself", async () => {
-    await placeLabel(LATEX);
+    await drawLabelled(LATEX);
 
     const locations = new Set(serializeCanvas(canvas).match(/https?:\/\/[^"'\s>]+/gu));
     expect([...locations]).toEqual([SVG_NS]);
   });
 
   it("carries no text needing a font the reader may not have", async () => {
-    await placeLabel(LATEX);
+    await drawLabelled(LATEX);
 
     expect(reopenExport().querySelectorAll("text")).toHaveLength(0);
   });

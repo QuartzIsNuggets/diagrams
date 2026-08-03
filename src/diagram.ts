@@ -470,17 +470,22 @@ function awayFrom(box: number, pusher: number, grower: number): number {
 export type Refusal = "outside-every-box" | "too-close-to-a-dot";
 
 /**
- * The next diagram, or the reason there is none.
+ * A placed term-dot — the diagram that has it, and which dot it is — or the
+ * reason it was not placed.
  *
- * Told apart by `typeof`: a refusal is a bare reason, so it needs no wrapper and
- * a diagram needs no unwrapping in the arm that matters. A transition that
- * cannot refuse returns a {@link Diagram} instead, rather than an arm no caller
- * could reach.
+ * The id comes back because placing and naming are two gestures' worth of
+ * apart: the dot lands where the release did, and only then is there something
+ * to ask a name of, so whoever placed it has to be able to say which one it
+ * was.
+ *
+ * The two arms are told apart by `typeof`: a refusal is a bare reason, so it
+ * needs no wrapper of its own. A transition that cannot refuse hands back what
+ * it made instead, rather than an arm no caller could reach.
  *
  * Not exported: a caller reads the arm it got rather than naming the union, and
  * {@link Refusal} is the half a shell has to answer for.
  */
-type Next = Diagram | Refusal;
+type Placed = { readonly diagram: Diagram; readonly dot: DotId } | Refusal;
 
 /**
  * The least a diagram lets two term-dots stand apart, in diagram units.
@@ -530,7 +535,7 @@ export function dotsIn(diagram: Diagram, box: Box): readonly Dot[] {
  * a {@link BOX_CLEARANCE} keeps their walls further apart than that — is a fact
  * about two numbers rather than a rule, and not one to build the rule on.
  */
-export function addDot(diagram: Diagram, at: Point): Next {
+export function addDot(diagram: Diagram, at: Point): Placed {
   const box = boxAt(diagram, at);
   if (!box) {
     return "outside-every-box";
@@ -542,10 +547,37 @@ export function addDot(diagram: Diagram, at: Point): Next {
   }
   const [id, spent] = takeId(diagram, "dot");
   const placed: Dot = { id, box: box.id, x: at.x - box.x, y: at.y - box.y };
-  return { ...spent, dots: [...spent.dots, placed] };
+  return { diagram: { ...spent, dots: [...spent.dots, placed] }, dot: id };
 }
 
 /** Where every dot in the diagram stands. */
 function placesOf(diagram: Diagram): readonly Point[] {
   return diagram.boxes.flatMap((box) => dotsIn(diagram, box).map((dot) => placeOf(box, dot)));
+}
+
+/** Which side of a term-dot a new label sits on, until the user moves it. */
+const NEW_DOT_SIDE: DotSide = "above";
+
+/**
+ * Name a term-dot: the diagram with `source` labelling `dot`.
+ *
+ * A dot is placed before it is named and stands whether or not it ever is, so
+ * this is a transition of its own rather than an argument to
+ * {@link addDot} — and it cannot refuse, a name being nothing the notation has
+ * a rule about. Naming a dot already named replaces the name, there being one
+ * label per dot.
+ *
+ * Which side a *first* label takes is creation's, exactly as a box's
+ * {@link LabelSlot} is: `goal.jpg` sets a term's name to its dot's left, which
+ * is the lane a path arrives on, so a new one goes above and moving it is the
+ * drag that moves a box's label. A side already chosen survives a rename — the
+ * side is the user's from the moment they move it, and renaming is not moving.
+ */
+export function labelDot(diagram: Diagram, dot: DotId, source: Source): Diagram {
+  return {
+    ...diagram,
+    dots: diagram.dots.map((one) =>
+      one.id === dot ? { ...one, source, labelSide: one.labelSide ?? NEW_DOT_SIDE } : one,
+    ),
+  };
 }

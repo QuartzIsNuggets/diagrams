@@ -14,7 +14,7 @@ if (!app) {
 }
 
 const canvas = createCanvas();
-const labelForm = createLabelForm(canvas);
+const labelForm = createLabelForm();
 const editor = createEditor(canvas, labelForm);
 const exportControls = createExportControls(canvas);
 

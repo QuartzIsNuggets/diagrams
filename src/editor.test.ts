@@ -25,6 +25,10 @@ function dotsOn(): SVGCircleElement[] {
   return [...canvas.querySelectorAll<SVGCircleElement>("g.diagram circle.term-dot")];
 }
 
+function dotLabelsOn(): SVGGElement[] {
+  return [...canvas.querySelectorAll<SVGGElement>("g.diagram g.dot-label")];
+}
+
 function centresOf(): (string | null)[][] {
   return dotsOn().map((dot) => [dot.getAttribute("cx"), dot.getAttribute("cy")]);
 }
@@ -90,13 +94,32 @@ async function makeBox(
   return boxesOn();
 }
 
+/** Give up on whatever the bar is asking, and wait for it back in its corner. */
+async function giveUp(): Promise<void> {
+  press("Escape");
+  await vi.waitFor(() => expect(form.classList.contains("asking")).toBe(false));
+}
+
+/**
+ * Plop a dot and name it, waiting for the label to land.
+ *
+ * Every dot the editor places is asked for a name, and one question is open at
+ * a time — so a test placing a second dot has to have answered for the first.
+ */
+async function plopDot(x: number, y: number, source = "x"): Promise<void> {
+  const before = dotLabelsOn().length;
+  dragOut(x, y, x, y);
+  submit(source);
+  await vi.waitFor(() => expect(dotLabelsOn()).toHaveLength(before + 1));
+}
+
 function refusalText(): string {
   return document.querySelector(".canvas-error")?.textContent ?? "";
 }
 
 beforeEach(() => {
   canvas = createCanvas();
-  form = createLabelForm(canvas);
+  form = createLabelForm();
   document.body.replaceChildren(createEditor(canvas, form), form);
 });
 
@@ -277,16 +300,86 @@ describe("a press inside a box", () => {
     dragOut(100, 100, 150, 120);
 
     expect(centresOf()).toEqual([["150", "-120"]]);
+    await giveUp();
   });
 
   it("puts it in the diagram, so it is redrawn along with everything else", async () => {
     await makeBox([40, 40], [240, 140]);
-    dragOut(100, 100, 100, 100);
+    await plopDot(100, 100);
 
     await makeBox([400, 400], [500, 500], "B");
 
     expect(centresOf()).toEqual([["100", "-100"]]);
+    expect(dotLabelsOn()).toHaveLength(1);
     expect(boxesOn()).toHaveLength(2);
+  });
+});
+
+describe("naming a term-dot", () => {
+  it("asks for a source at the dot, once it is down", async () => {
+    await makeBox([40, 40], [240, 140]);
+
+    dragOut(100, 100, 150, 120);
+
+    expect(dotsOn()).toHaveLength(1);
+    expect(form.classList.contains("asking")).toBe(true);
+    await giveUp();
+  });
+
+  it("draws the label from the source it was named with", async () => {
+    await makeBox([40, 40], [240, 140]);
+
+    await plopDot(100, 100, "z'");
+
+    expect(dotLabelsOn()[0]?.querySelectorAll("path").length).toBeGreaterThan(0);
+  });
+
+  it("leaves the dot unnamed where the question is given up on, the name being optional", async () => {
+    await makeBox([40, 40], [240, 140]);
+
+    dragOut(100, 100, 100, 100);
+
+    await giveUp();
+    expect(dotsOn()).toHaveLength(1);
+    expect(dotLabelsOn()).toHaveLength(0);
+  });
+});
+
+describe("a dot's source that will not typeset", () => {
+  it("is kept out of the diagram and left in the input", async () => {
+    const bad = "\\notacontrolsequence{x}";
+    await makeBox([40, 40], [240, 140]);
+
+    dragOut(100, 100, 100, 100);
+    submit(bad);
+
+    await vi.waitFor(() => expect(refusalText()).toMatch(/undefined control sequence/iu));
+    expect(dotsOn()).toHaveLength(1);
+    expect(dotLabelsOn()).toHaveLength(0);
+    expect(form.querySelector("input")?.value).toBe(bad);
+  });
+
+  it("does not stop the dot that follows it", async () => {
+    await makeBox([40, 40], [240, 140]);
+    dragOut(100, 100, 100, 100);
+    submit("\\notacontrolsequence{x}");
+    await vi.waitFor(() => expect(refusalText()).toBeTruthy());
+
+    await plopDot(200, 120, "y");
+
+    expect(dotLabelsOn()).toHaveLength(1);
+    expect(refusalText()).toBe("");
+  });
+
+  it("starts no second gesture while the question is open", async () => {
+    await makeBox([40, 40], [240, 140]);
+    dragOut(100, 100, 100, 100);
+
+    dragOut(400, 400, 500, 500);
+
+    expect(boxesOn()).toHaveLength(1);
+    expect(canvas.querySelector("g.chrome")).toBeNull();
+    await giveUp();
   });
 });
 
@@ -302,7 +395,7 @@ describe("a release with nowhere to put a dot", () => {
 
   it("places none on a dot already down, whether released onto it or dragged onto it", async () => {
     await makeBox([40, 40], [240, 140]);
-    dragOut(100, 100, 100, 100);
+    await plopDot(100, 100);
 
     dragOut(100, 100, 100, 100);
     expect(dotsOn()).toHaveLength(1);
@@ -317,7 +410,7 @@ describe("a release with nowhere to put a dot", () => {
     dragOut(100, 100, 500, 500);
     expect(refusalText()).toBeTruthy();
 
-    dragOut(100, 100, 150, 120);
+    await plopDot(150, 120);
 
     expect(dotsOn()).toHaveLength(1);
     expect(refusalText()).toBe("");
@@ -329,16 +422,5 @@ describe("what the canvas holds besides the diagram", () => {
     await makeBox([40, 40], [240, 140]);
 
     expect(dotsOn()).toHaveLength(0);
-  });
-
-  it("keeps the typeset labels it holds for other reasons through a redraw", async () => {
-    await makeBox([40, 40], [240, 140]);
-    submit("P(x)");
-    await vi.waitFor(() => expect(canvas.querySelectorAll("g.math-label")).toHaveLength(1));
-
-    await makeBox([400, 400], [500, 500], "B");
-
-    expect(canvas.querySelectorAll("g.math-label")).toHaveLength(1);
-    expect(boxesOn()).toHaveLength(2);
   });
 });

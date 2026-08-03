@@ -10,7 +10,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import type { Arrow, Box, Diagram, Dot, Equivalence, NewBox, Path, Point } from "./diagram";
+import type { Arrow, Box, Diagram, Dot, DotId, Equivalence, NewBox, Path, Point } from "./diagram";
 import {
   addBox,
   addDot,
@@ -19,6 +19,7 @@ import {
   DOT_SEPARATION,
   dotsIn,
   EMPTY_DIAGRAM,
+  labelDot,
   placeOf,
   takeId,
 } from "./diagram";
@@ -386,13 +387,18 @@ describe("what a point lands inside", () => {
 /** A box roomy enough for every dot placed below. */
 const ROOM = square(0, 0, 60);
 
-/** The diagram a landed release leaves, or a failure saying it was refused. */
-function plopped(diagram: Diagram, at: Point): Diagram {
+/** What a landed release leaves, or a failure saying it was refused. */
+function placed(diagram: Diagram, at: Point): { diagram: Diagram; dot: DotId } {
   const next = addDot(diagram, at);
   if (typeof next !== "string") {
     return next;
   }
   throw new Error(`a dot at (${String(at.x)}, ${String(at.y)}) was refused: ${next}`);
+}
+
+/** The diagram a landed release leaves. */
+function plopped(diagram: Diagram, at: Point): Diagram {
+  return placed(diagram, at).diagram;
 }
 
 describe("placing a term-dot", () => {
@@ -431,5 +437,40 @@ describe("a release the diagram refuses", () => {
     expect(plopped(two, { x: DOT_SEPARATION - 20, y: 0 }).dots).toHaveLength(3);
     // And what was refused was not half-applied on the way out.
     expect(two).toEqual(before);
+  });
+});
+
+// A dot is placed before it is named, so `addDot` says which dot it placed and
+// naming is a transition of its own. The source is kept as the source: what it
+// typesets to is the backend's, and never reaches here.
+
+describe("naming a term-dot", () => {
+  it("gives the dot it names the source and the side its label takes, and no other dot", () => {
+    const one = placed(drawn(ROOM), { x: 10, y: -5 });
+    const two = placed(one.diagram, { x: -10, y: -5 });
+
+    expect(labelDot(two.diagram, two.dot, "z'").dots).toEqual([
+      { id: 2, box: 1, x: 10, y: -5 },
+      { id: 3, box: 1, x: -10, y: -5, source: "z'", labelSide: "above" },
+    ]);
+  });
+
+  it("replaces a name rather than adding one, and leaves the diagram it was handed", () => {
+    const { diagram, dot } = placed(drawn(ROOM), { x: 10, y: -5 });
+    const before = structuredClone(diagram);
+
+    expect(labelDot(labelDot(diagram, dot, "x"), dot, "y").dots[0]?.source).toBe("y");
+    expect(diagram).toEqual(before);
+  });
+
+  it("leaves a side already chosen where it is — renaming a dot is not moving its label", () => {
+    const { diagram, dot } = placed(drawn(ROOM), { x: 10, y: -5 });
+    const named = labelDot(diagram, dot, "x");
+    const moved: Diagram = {
+      ...named,
+      dots: named.dots.map((one) => ({ ...one, source: "x", labelSide: "right" as const })),
+    };
+
+    expect(labelDot(moved, dot, "y").dots[0]).toMatchObject({ source: "y", labelSide: "right" });
   });
 });

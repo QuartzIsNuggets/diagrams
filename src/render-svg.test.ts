@@ -10,12 +10,34 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createCanvas, SVG_NS } from "./canvas";
-import type { Diagram, Extent, Point } from "./diagram";
-import { addBox, addDot, DOT_SEPARATION, EMPTY_DIAGRAM } from "./diagram";
+import type { Diagram, DotId, DotSide, Extent, Point } from "./diagram";
+import { addBox, addDot, DOT_SEPARATION, EMPTY_DIAGRAM, labelDot } from "./diagram";
 import type { Started } from "./render-svg";
-import { clearChrome, enableDragging, measureBox, renderDiagram, toPagePoint } from "./render-svg";
+import {
+  clearChrome,
+  enableDragging,
+  measureBox,
+  renderDiagram,
+  setLabelsOf,
+  toPagePoint,
+  vetSource,
+} from "./render-svg";
+import { typesetLatex } from "./typesetting";
+
+// The real engine, counted rather than replaced: how often a source is set is
+// the backend's own claim, and it is only worth asserting against the thing
+// that actually sets one. `typesetting.test.ts` is untouched by this.
+vi.mock("./typesetting", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./typesetting")>();
+  return { ...actual, typesetLatex: vi.fn(actual.typesetLatex) };
+});
 
 let canvas: SVGSVGElement;
+
+/** How many times the engine has been asked for `source`. */
+function timesSet(source: string): number {
+  return vi.mocked(typesetLatex).mock.calls.filter(([latex]) => latex === source).length;
+}
 
 /**
  * Place the canvas at a viewport offset.
@@ -62,15 +84,27 @@ function withBox(extent: Extent, source = "A"): Diagram {
   return addBox(EMPTY_DIAGRAM, { source, ...extent });
 }
 
+/** A dot placed at `at`, or a failure saying the diagram refused it. */
+function placedAt(diagram: Diagram, at: Point): { diagram: Diagram; dot: DotId } {
+  const next = addDot(diagram, at);
+  if (typeof next !== "string") {
+    return next;
+  }
+  throw new Error(`the diagram refused a dot: ${next}`);
+}
+
 /** That box, with a dot at each of `places` — a gesture per dot. */
 function withDots(extent: Extent, ...places: readonly Point[]): Diagram {
-  return places.reduce<Diagram>((sofar, at) => {
-    const next = addDot(sofar, at);
-    if (typeof next !== "string") {
-      return next;
-    }
-    throw new Error(`the diagram refused a dot: ${next}`);
-  }, withBox(extent));
+  return places.reduce<Diagram>((sofar, at) => placedAt(sofar, at).diagram, withBox(extent));
+}
+
+/** That box, with one dot at `at` labelled `source` on the side named. */
+function withNamedDot(extent: Extent, at: Point, source: string, side: DotSide = "above"): Diagram {
+  const { diagram, dot } = placedAt(withBox(extent), at);
+  const named = labelDot(diagram, dot, source);
+  // `above` is the side the model gives a new label; the other three are
+  // written in here, no gesture putting a label on one of them yet.
+  return { ...named, dots: named.dots.map((one) => ({ ...one, source, labelSide: side })) };
 }
 
 /**
@@ -255,6 +289,174 @@ describe("a term-dot", () => {
     // The model owns how far apart two dots stand and names no size; this is
     // the whole of what a backend owes that number.
     expect(2 * Number(drawnDots()[0]?.getAttribute("r"))).toBeLessThanOrEqual(DOT_SEPARATION);
+  });
+});
+
+/** Where a label was put: the origin its transform translates its glyphs to. */
+function originOf(label: Element | null | undefined): Point {
+  const [x = NaN, y = NaN] = /translate\(([-\d.]+),([-\d.]+)\)/u
+    .exec(label?.getAttribute("transform") ?? "")
+    ?.slice(1)
+    .map(Number) ?? [NaN, NaN];
+  return { x, y };
+}
+
+/** Draw a box holding one dot named `source` on `side`, and place the label. */
+async function drawNamedDot(source: string, side?: DotSide): Promise<Point> {
+  const diagram = withNamedDot({ x: 0, y: 0, w: 200, h: 200 }, { x: 0, y: 0 }, source, side);
+  await setLabelsOf(diagram);
+  renderDiagram(canvas, diagram);
+  return originOf(canvas.querySelector("g.dot-label"));
+}
+
+describe("a term-dot's label", () => {
+  it("is drawn from the source the dot carries, in the dot's own ink", async () => {
+    await drawNamedDot("x");
+
+    const label = canvas.querySelector("g.dot-label");
+    expect(label?.querySelectorAll("path").length).toBeGreaterThan(0);
+    expect(label?.getAttribute("color")).toBe(drawnDots()[0]?.getAttribute("fill"));
+    // Turned back the right way up, as a box's label is: glyph geometry
+    // expects the y-down frame it was made in.
+    expect(label?.getAttribute("transform")).toMatch(/^translate\(.+\) scale\([\d.]+,-[\d.]+\)$/u);
+  });
+
+  it("sits on the side the dot names, all four being answers of their own", async () => {
+    const sides = ["left", "right", "above", "below"] as const;
+    const origins = [];
+    for (const side of sides) {
+      origins.push(await drawNamedDot("y", side));
+    }
+    const [left, right, above, below] = origins;
+
+    expect(new Set(origins.map(({ x, y }) => `${String(x)},${String(y)}`)).size).toBe(4);
+    // Beside the dot: one run's width to its left, or straight off its right.
+    expect(left?.x).toBeLessThan(0);
+    expect(right?.x).toBeGreaterThan(0);
+    expect(left?.y).toBeCloseTo(right?.y ?? NaN);
+    // Above and below: centred across the dot, clear of it either way.
+    expect(above?.y).toBeGreaterThan(0);
+    expect(below?.y).toBeLessThan(0);
+    expect(above?.x).toBeCloseTo(below?.x ?? NaN);
+  });
+
+  it("stands clear of the dot's own ink, rather than of the point it marks", async () => {
+    const beside = await drawNamedDot("q", "right");
+
+    expect(beside.x).toBeGreaterThan(Number(drawnDots()[0]?.getAttribute("r")));
+  });
+});
+
+describe("a dot with no label to draw", () => {
+  it("is one that was never named, and it still draws", () => {
+    renderDiagram(canvas, withDots({ x: 0, y: 0, w: 80, h: 40 }, { x: 10, y: 10 }));
+
+    expect(canvas.querySelector("g.dot-label")).toBeNull();
+    expect(drawnDots()).toHaveLength(1);
+  });
+
+  it("is one whose source has never been set, and it still draws too", () => {
+    renderDiagram(canvas, withNamedDot({ x: 0, y: 0, w: 80, h: 40 }, { x: 0, y: 0 }, "\\neverset"));
+
+    expect(canvas.querySelector("g.dot-label")).toBeNull();
+    expect(drawnDots()).toHaveLength(1);
+  });
+});
+
+describe("setting the sources a diagram brings", () => {
+  it("sets what has never been set, so the next drawing has it to draw", async () => {
+    const diagram = withNamedDot({ x: 0, y: 0, w: 200, h: 200 }, { x: 0, y: 0 }, "w");
+
+    renderDiagram(canvas, diagram);
+    expect(canvas.querySelector("g.dot-label")).toBeNull();
+    expect(await setLabelsOf(diagram)).toEqual([]);
+    renderDiagram(canvas, diagram);
+
+    expect(canvas.querySelectorAll("g.dot-label")).toHaveLength(1);
+  });
+});
+
+describe("a source that will not set", () => {
+  it("is named, and what the typesetter said of it with it", async () => {
+    const bad = "\\notacontrolsequence{u}";
+    const diagram = withNamedDot({ x: 0, y: 0, w: 200, h: 200 }, { x: 0, y: 0 }, bad);
+
+    const unset = await setLabelsOf(diagram);
+
+    expect(unset).toHaveLength(1);
+    expect(unset[0]?.source).toBe(bad);
+    expect(unset[0]?.why).toMatch(/undefined control sequence/iu);
+  });
+
+  it("leaves that dot drawn and its source in the diagram, to be corrected", async () => {
+    const bad = "\\notacontrolsequence{v}";
+    const diagram = withNamedDot({ x: 0, y: 0, w: 200, h: 200 }, { x: 0, y: 0 }, bad);
+
+    await setLabelsOf(diagram);
+    renderDiagram(canvas, diagram);
+
+    expect(drawnDots()).toHaveLength(1);
+    expect(canvas.querySelector("g.dot-label")).toBeNull();
+    expect(diagram.dots[0]?.source).toBe(bad);
+  });
+
+  it("costs that label alone, and neither another nor the rest of the drawing", async () => {
+    const bad = "\\notacontrolsequence{s}";
+    const first = placedAt(withBox({ x: 0, y: 0, w: 200, h: 200 }, "A"), { x: -40, y: 0 });
+    const second = placedAt(first.diagram, { x: 40, y: 0 });
+    const diagram = labelDot(labelDot(second.diagram, first.dot, bad), second.dot, "t");
+
+    expect(await setLabelsOf(diagram)).toHaveLength(1);
+    renderDiagram(canvas, diagram);
+
+    expect(canvas.querySelectorAll("g.dot-label")).toHaveLength(1);
+    expect(canvas.querySelectorAll("g.box-label")).toHaveLength(1);
+    expect(drawnDots()).toHaveLength(2);
+  });
+});
+
+// Once per source, not once per label per frame: a redraw rebuilds every label,
+// and a source that would not set is remembered as such so that it is neither
+// retried nor reported again.
+
+describe("a source already set", () => {
+  it("is not set a second time, whether it came to a run or to a refusal", async () => {
+    const good = "\\alpha";
+    const bad = "\\notacontrolsequence{r}";
+    const diagram = withNamedDot({ x: 0, y: 0, w: 200, h: 200 }, { x: 0, y: 0 }, bad, "left");
+    const both: Diagram = {
+      ...diagram,
+      boxes: diagram.boxes.map((box) => ({ ...box, source: good })),
+    };
+
+    await setLabelsOf(both);
+    await setLabelsOf(both);
+    renderDiagram(canvas, both);
+
+    expect([timesSet(good), timesSet(bad)]).toEqual([1, 1]);
+  });
+});
+
+describe("vetting a source before a gesture puts it in the diagram", () => {
+  it("takes one this backend can draw", async () => {
+    await expect(vetSource("\\beta")).resolves.toBeUndefined();
+  });
+
+  it("refuses one it cannot, saying what the typesetter said", async () => {
+    await expect(vetSource("\\notacontrolsequence{n}")).rejects.toThrow(
+      /undefined control sequence/iu,
+    );
+  });
+
+  it("asks the engine again when the same source is submitted twice", async () => {
+    const bad = "\\notacontrolsequence{m}";
+
+    await expect(vetSource(bad)).rejects.toThrow();
+    await expect(vetSource(bad)).rejects.toThrow();
+
+    // A submit is someone asking, where a redraw asks nothing — so a refusal a
+    // bad moment produced is never frozen onto the source that met it.
+    expect(timesSet(bad)).toBe(2);
   });
 });
 

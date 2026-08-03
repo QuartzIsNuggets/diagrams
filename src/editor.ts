@@ -8,20 +8,30 @@
 // because the diagram holds it, and a gesture that changes the drawing does so
 // by making the next diagram, never by appending to the canvas.
 
-import type { Diagram, Extent, Point, Refusal } from "./diagram";
-import { addBox, addDot, boxAt, EMPTY_DIAGRAM } from "./diagram";
+import type { Diagram, DotId, Extent, Point, Refusal } from "./diagram";
+import { addBox, addDot, boxAt, EMPTY_DIAGRAM, labelDot } from "./diagram";
 import { messageOf } from "./failure";
 import { askForSource, clearSource } from "./label-form";
-import { clearChrome, enableDragging, measureBox, renderDiagram, toPagePoint } from "./render-svg";
+import type { Unset } from "./render-svg";
+import {
+  clearChrome,
+  enableDragging,
+  measureBox,
+  renderDiagram,
+  setLabelsOf,
+  toPagePoint,
+  vetSource,
+} from "./render-svg";
 
 /**
  * The editor — the canvas, and the region a refused gesture is reported in —
  * wired and ready to append.
  *
- * `form` is the one place LaTeX is typed: the shell sends it to the box being
- * made and takes the source back from it, which is all either knows of the
- * other. It comes back already listening, there being no useful moment between
- * a canvas and a canvas that draws.
+ * `form` is the one place LaTeX is typed: the shell sends it to whatever is
+ * being named — the rectangle a box is drawn in, the dot just plopped — and
+ * takes the source back from it, which is all either knows of the other. It
+ * comes back already listening, there being no useful moment between a canvas
+ * and a canvas that draws.
  */
 export function createEditor(canvas: SVGSVGElement, form: HTMLFormElement): HTMLDivElement {
   const editor = document.createElement("div");
@@ -53,21 +63,105 @@ const REFUSALS: Record<Refusal, string> = {
 };
 
 /**
- * The diagram a plop leaves, or the one handed in where the model would not have
- * the dot — which the region is told, a refusal that says nothing being
- * indistinguishable from a gesture that broke.
+ * What a diagram nothing here constructed is told about the sources this
+ * backend could not set.
  *
- * No question and nothing to await: a dot is placed before it is named, so the
- * whole of that gesture is this one transition.
+ * Named rather than counted: each one is still in the diagram to be corrected,
+ * and it is the LaTeX that says which to correct.
  */
-function plopped(diagram: Diagram, at: Point, refusal: HTMLParagraphElement): Diagram {
-  const next = addDot(diagram, at);
-  if (typeof next === "string") {
-    refusal.textContent = REFUSALS[next];
-    return diagram;
+function unsetWording(unset: readonly Unset[]): string {
+  return unset.map(({ source, why }) => `“${source}” could not be typeset: ${why}`).join(" ");
+}
+
+/**
+ * What a gesture acts on: the diagram on screen, what draws it, what asks for a
+ * source, and where a refusal is put.
+ *
+ * The one mutable thing the editor has. `current` is the document — every mark
+ * on the canvas is there because it holds one — and `naming` says whether the
+ * single input is already answering someone, since a second question would
+ * throw away the first's typed source.
+ */
+interface Shell {
+  readonly canvas: SVGSVGElement;
+  readonly form: HTMLFormElement;
+  readonly refusal: HTMLParagraphElement;
+  current: Diagram;
+  naming: boolean;
+}
+
+/**
+ * Draw the diagram as it stands, and set whatever label in it has not been set.
+ *
+ * Drawing is synchronous and typesetting is not, so what is already set is on
+ * screen at once and the rest arrives when it is. For a drawing the gestures
+ * below made there is never anything left to set — each vets its source before
+ * the diagram holds it — so the second pass is what a diagram this editor did
+ * not construct will land by, and what could not be set is reported rather than
+ * dropped.
+ */
+function draw(shell: Shell): void {
+  renderDiagram(shell.canvas, shell.current);
+  void settle(shell);
+}
+
+async function settle(shell: Shell): Promise<void> {
+  const unset = await setLabelsOf(shell.current);
+  // Redrawn from `current` rather than from the diagram this started on, so a
+  // gesture that landed meanwhile is not undone by a label arriving late.
+  renderDiagram(shell.canvas, shell.current);
+  // Written only when there is something to say, never cleared: settling is not
+  // an attempt, and a gesture in flight may already have put its own failure
+  // here. What clears this report is the next thing that lands.
+  if (unset.length > 0) {
+    shell.refusal.textContent = unsetWording(unset);
   }
-  refusal.textContent = "";
-  return next;
+}
+
+/**
+ * Run a naming out, and draw whatever it settles on.
+ *
+ * The one place a gesture ends, whichever mark it was making. A source that
+ * will not typeset rejects, and that is the only thing either naming reports:
+ * a message stands for the last attempt, so anything that is not a refusal — a
+ * mark named, a question given up on — empties the region instead.
+ */
+async function named(shell: Shell, naming: Promise<Diagram>): Promise<void> {
+  try {
+    shell.current = await naming;
+    draw(shell);
+    shell.refusal.textContent = "";
+  } catch (failure: unknown) {
+    shell.refusal.textContent = messageOf(failure);
+  } finally {
+    // However it went, the gesture is over: any rectangle it drew goes, and the
+    // next press is free to start another.
+    clearChrome(shell.canvas);
+    shell.naming = false;
+  }
+}
+
+/**
+ * Put the dot where the release landed, then ask what it is called.
+ *
+ * The dot goes down before the question is asked and stays whatever the answer:
+ * a term-dot's label is optional, so a question given up on leaves an unnamed
+ * dot rather than nothing — where a box, which *is* its type expression, is
+ * never made at all. Asking first would cost more than it bought, a release the
+ * model refuses then throwing away a source already typed.
+ */
+async function nameDot(shell: Shell, at: Point): Promise<void> {
+  const placed = addDot(shell.current, at);
+  if (typeof placed === "string") {
+    shell.refusal.textContent = REFUSALS[placed];
+    shell.naming = false;
+    return;
+  }
+  shell.current = placed.diagram;
+  shell.refusal.textContent = "";
+  draw(shell);
+
+  await named(shell, dotNamed(shell, placed.dot, at));
 }
 
 /**
@@ -87,50 +181,26 @@ function enableDrawing(
   form: HTMLFormElement,
   refusal: HTMLParagraphElement,
 ): void {
-  let current = EMPTY_DIAGRAM;
-  let naming = false;
+  const shell: Shell = { canvas, form, refusal, current: EMPTY_DIAGRAM, naming: false };
   let making: "box" | "dot" = "box";
-  renderDiagram(canvas, current);
+  draw(shell);
 
   enableDragging(
     canvas,
     (at) => {
-      if (naming) {
+      if (shell.naming) {
         return "no-gesture";
       }
-      making = boxAt(current, at) ? "dot" : "box";
+      making = boxAt(shell.current, at) ? "dot" : "box";
       // A dot has no extent to show: a rectangle following the pointer would
       // say a box was coming.
       return making === "box" ? "rectangle" : "nothing";
     },
     (drag, at) => {
-      if (making === "dot") {
-        current = plopped(current, at, refusal);
-        renderDiagram(canvas, current);
-        return;
-      }
-      naming = true;
-      void nameIt(drag);
+      shell.naming = true;
+      void (making === "box" ? named(shell, boxFrom(shell, drag)) : nameDot(shell, at));
     },
   );
-
-  /** Run the naming out, and draw whatever it settles on. */
-  async function nameIt(drag: Extent): Promise<void> {
-    try {
-      current = await boxFrom(canvas, form, current, drag);
-      renderDiagram(canvas, current);
-      // A message stands for the last attempt, so anything that is not a
-      // refusal — a box made, a question given up on — empties the region.
-      refusal.textContent = "";
-    } catch (failure: unknown) {
-      refusal.textContent = messageOf(failure);
-    } finally {
-      // However it went, the gesture is over: its rectangle goes, and the next
-      // press is free to start another.
-      clearChrome(canvas);
-      naming = false;
-    }
-  }
 }
 
 /**
@@ -142,27 +212,42 @@ function enableDrawing(
  * source that will not typeset rejects, so nothing is added and the source stays
  * in the input to be corrected.
  */
-async function boxFrom(
-  canvas: SVGSVGElement,
-  form: HTMLFormElement,
-  diagram: Diagram,
-  drag: Extent,
-): Promise<Diagram> {
+async function boxFrom(shell: Shell, drag: Extent): Promise<Diagram> {
   // At the label slot a new box takes, so a source is typed where the label it
   // becomes will be.
-  const slot = toPagePoint(canvas, { x: drag.x, y: drag.y + drag.h / 2 });
-  const source = await askForSource(form, slot);
+  const slot = toPagePoint(shell.canvas, { x: drag.x, y: drag.y + drag.h / 2 });
+  const source = await askForSource(shell.form, slot);
   if (!source) {
-    return diagram;
+    return shell.current;
   }
 
   const floor = await measureBox(source);
-  clearSource(form);
-  return addBox(diagram, {
+  clearSource(shell.form);
+  return addBox(shell.current, {
     source,
     x: drag.x,
     y: drag.y,
     w: Math.max(drag.w, floor.w),
     h: Math.max(drag.h, floor.h),
   });
+}
+
+/**
+ * Ask what the dot just placed is called, and hand back the diagram that has it
+ * named — or the one handed in, where the question was given up on.
+ *
+ * The bar goes to the dot itself rather than to where the glyphs will land: the
+ * dot is the mark the question is about, and how far off it a label stands is
+ * the backend's own. A source that will not typeset rejects, so the dot keeps
+ * no name and the source stays in the input to be corrected.
+ */
+async function dotNamed(shell: Shell, dot: DotId, at: Point): Promise<Diagram> {
+  const source = await askForSource(shell.form, toPagePoint(shell.canvas, at));
+  if (!source) {
+    return shell.current;
+  }
+
+  await vetSource(source);
+  clearSource(shell.form);
+  return labelDot(shell.current, dot, source);
 }

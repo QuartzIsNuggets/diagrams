@@ -2,147 +2,136 @@
 //
 // SPDX-License-Identifier: MIT
 
-// The LaTeX bar and what it puts on the canvas. The typesetting engine behind
-// it is covered in typesetting.test.ts.
+// The LaTeX bar: the one place a source is typed, and what it answers with. It
+// draws nothing and typesets nothing, so what a source becomes is tested where
+// it happens — editor.test.ts for the gestures that ask, render-svg.test.ts for
+// the backend that sets one.
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
-import { createCanvas } from "./canvas";
-import { createLabelForm } from "./label-form";
+import { askForSource, clearSource, createLabelForm } from "./label-form";
 
 const LATEX = "\\Sigma_{(x:A)} P(x)";
 
-let canvas: SVGSVGElement;
+/** Somewhere on the page for the bar to go: the mark a question is about. */
+const AT = { left: 300, top: 200 };
+
 let form: HTMLFormElement;
 
-function labelsOf(): SVGGElement[] {
-  return [...canvas.querySelectorAll<SVGGElement>("g.math-label")];
+function input(): HTMLInputElement {
+  const found = form.querySelector("input");
+  if (!found) {
+    throw new Error("the bar has lost its input");
+  }
+  return found;
 }
 
-/** Type `latex` into the form and press its submit button, the way a user would. */
+/** Type `latex` into the bar and press its button, the way a user would. */
 function submit(latex: string): void {
-  form.querySelector("input")!.value = latex;
+  input().value = latex;
   form.querySelector<HTMLButtonElement>("button[type=submit]")!.click();
 }
 
-/** Wait for the fire-and-forget submit handler to land `count` labels. */
-async function waitForLabels(count: number): Promise<SVGGElement[]> {
-  await vi.waitFor(() => expect(labelsOf()).toHaveLength(count));
-  return labelsOf();
+function press(key: string): void {
+  form.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
 }
 
 beforeEach(() => {
-  canvas = createCanvas();
-  form = createLabelForm(canvas);
-  document.body.replaceChildren(canvas, form);
+  form = createLabelForm();
+  document.body.replaceChildren(form);
 });
 
 describe("the label form", () => {
   it("offers a text input and a submit affordance", () => {
-    const input = form.querySelector("input");
-    expect(input?.type).toBe("text");
-    expect(input?.getAttribute("aria-label")).toBeTruthy();
+    expect(input().type).toBe("text");
+    expect(input().getAttribute("aria-label")).toBeTruthy();
     expect(form.querySelector("button[type=submit]")).not.toBeNull();
   });
 
-  it("does not navigate away when submitted", () => {
+  it("does not navigate away when submitted, asked anything or not", () => {
     const event = new Event("submit", { bubbles: true, cancelable: true });
 
     form.dispatchEvent(event);
 
     expect(event.defaultPrevented).toBe(true);
   });
+
+  it("reports nothing of its own — one region answers for every gesture alike", () => {
+    expect(form.querySelector("[role=alert]")).toBeNull();
+  });
 });
 
-describe("placing a typeset label", () => {
-  it("appends it to the canvas on submit", async () => {
-    submit(LATEX);
+describe("asking for a source", () => {
+  it("leaves the bar's corner for the point the question is about", () => {
+    form.getBoundingClientRect = (): DOMRect => new DOMRect(0, 0, 200, 30);
 
-    const [label] = await waitForLabels(1);
-    expect(label?.parentNode).toBe(canvas);
-    expect(label?.querySelectorAll("path").length).toBeGreaterThan(0);
+    void askForSource(form, AT);
+
+    expect(form.classList.contains("asking")).toBe(true);
+    // The middle of the bar's bottom edge sits on the point, so its corner is
+    // half a width left of it and a whole height above.
+    expect([form.style.left, form.style.top]).toEqual(["200px", "170px"]);
   });
 
-  it("scales and positions it with a transform, so it lands somewhere visible", async () => {
+  it("answers with what was typed, and goes back to its corner", async () => {
+    const asked = askForSource(form, AT);
+
     submit(LATEX);
 
-    const [label] = await waitForLabels(1);
-    expect(label?.getAttribute("transform")).toMatch(
-      /^translate\([\d.]+,[\d.]+\) scale\([\d.]+\)$/u,
-    );
+    await expect(asked).resolves.toBe(LATEX);
+    expect(form.classList.contains("asking")).toBe(false);
+    expect(form.style.left).toBe("");
   });
 
-  it("carries its ink as a presentation attribute, so a serialized canvas keeps its look", async () => {
-    submit(LATEX);
+  it("answers with the source typed, never with what it would typeset to", async () => {
+    const asked = askForSource(form, AT);
 
-    const [label] = await waitForLabels(1);
-    expect(label?.getAttribute("color")).toBeTruthy();
+    submit(`  ${LATEX}  `);
+
+    await expect(asked).resolves.toBe(LATEX);
   });
 
-  it("stacks each new label clear of the last instead of piling them up", async () => {
-    submit(LATEX);
-    await waitForLabels(1);
-    submit("P(x)");
+  it("leaves what is already typed in place, so a refused source can be corrected", () => {
+    input().value = LATEX;
 
-    const transforms = (await waitForLabels(2)).map((label) => label.getAttribute("transform"));
-    expect(transforms[0]).not.toBe(transforms[1]);
+    void askForSource(form, AT);
+
+    expect(input().value).toBe(LATEX);
+  });
+});
+
+describe("giving up on a question", () => {
+  it("answers with nothing at all on Escape", async () => {
+    const asked = askForSource(form, AT);
+
+    press("Escape");
+
+    await expect(asked).resolves.toBe("");
+    expect(form.classList.contains("asking")).toBe(false);
   });
 
-  it("ignores a blank input", async () => {
+  it("answers the same for a submit with nothing in it, there being nothing to name", async () => {
+    const asked = askForSource(form, AT);
+
     submit("   ");
-    submit(LATEX);
 
-    // The blank submit would have landed first had it landed at all.
-    const [label] = await waitForLabels(1);
-    expect(label?.querySelectorAll("path").length).toBeGreaterThan(0);
+    await expect(asked).resolves.toBe("");
   });
 });
 
-describe("the input after a label lands", () => {
-  it("is cleared, so the next label can be typed straight away", async () => {
-    submit(LATEX);
-    await waitForLabels(1);
+describe("the input between questions", () => {
+  it("is emptied by whoever took the source, so the next is typed from nothing", () => {
+    input().value = LATEX;
 
-    expect(form.querySelector("input")?.value).toBe("");
+    clearSource(form);
+
+    expect(input().value).toBe("");
   });
 
-  it("keeps whatever was typed while the label was still typesetting", async () => {
-    const input = form.querySelector("input")!;
-    submit(LATEX);
-    input.value = "P(y)";
-
-    await waitForLabels(1);
-    expect(input.value).toBe("P(y)");
-  });
-});
-
-describe("a label that will not typeset", () => {
-  const BAD = "\\notacontrolsequence{x}";
-
-  it("puts nothing on the canvas and says why", async () => {
-    submit(BAD);
-
-    await vi.waitFor(() =>
-      expect(form.querySelector(".label-error")?.textContent).toMatch(
-        /undefined control sequence/iu,
-      ),
-    );
-    expect(labelsOf()).toHaveLength(0);
-  });
-
-  it("keeps the source in the input so it can be corrected", async () => {
-    submit(BAD);
-    await vi.waitFor(() => expect(form.querySelector(".label-error")?.textContent).toBeTruthy());
-
-    expect(form.querySelector("input")?.value).toBe(BAD);
-  });
-
-  it("does not stop the labels that follow it", async () => {
-    submit(BAD);
+  it("keeps what is typed when nothing is being asked, a submit naming nothing", () => {
     submit(LATEX);
 
-    const [label] = await waitForLabels(1);
-    expect(label?.querySelectorAll("path").length).toBeGreaterThan(0);
-    expect(form.querySelector(".label-error")?.textContent).toBe("");
+    expect(input().value).toBe(LATEX);
+    expect(form.classList.contains("asking")).toBe(false);
   });
 });

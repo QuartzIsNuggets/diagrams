@@ -102,9 +102,8 @@ body {
   background: #f4f4f4;
 }
 
-/* Empty until something is refused — a label, a gesture, a write — so they take
-   no room the rest of the time. */
-.label-error,
+/* Empty until something is refused — a gesture, a write — so they take no room
+   the rest of the time. */
 .canvas-error,
 .export-error {
   margin: 0;
