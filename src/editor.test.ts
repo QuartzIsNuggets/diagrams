@@ -14,10 +14,10 @@ import { createCanvas } from "./canvas";
 import { EMPTY_DIAGRAM } from "./diagram";
 import type { Editor } from "./editor";
 import { createEditor } from "./editor";
-import { createLabelForm } from "./label-form";
+import { createNamingBar } from "./naming-bar";
 
 let canvas: SVGSVGElement;
-let form: HTMLFormElement;
+let bar: HTMLFormElement;
 let editor: Editor;
 
 function boxesOn(): SVGRectElement[] {
@@ -60,8 +60,8 @@ function dragOut(fromX: number, fromY: number, toX: number, toY: number): void {
 
 /** Type `latex` into the bar and press its button, the way a user would. */
 function submit(latex: string): void {
-  const input = form.querySelector("input");
-  const button = form.querySelector<HTMLButtonElement>("button[type=submit]");
+  const input = bar.querySelector("input");
+  const button = bar.querySelector<HTMLButtonElement>("button[type=submit]");
   if (!input || !button) {
     throw new Error("the bar has lost its input");
   }
@@ -70,7 +70,7 @@ function submit(latex: string): void {
 }
 
 function press(key: string): void {
-  form.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+  bar.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
 }
 
 /**
@@ -81,7 +81,7 @@ function press(key: string): void {
  * rather than translating it onto the point.
  */
 function sizeBar(width: number, height: number): void {
-  form.getBoundingClientRect = (): DOMRect => new DOMRect(0, 0, width, height);
+  bar.getBoundingClientRect = (): DOMRect => new DOMRect(0, 0, width, height);
 }
 
 /** Drag a box out and name it, waiting for it to land. */
@@ -100,7 +100,7 @@ async function makeBox(
 /** Give up on whatever the bar is asking, and wait for it back in its corner. */
 async function giveUp(): Promise<void> {
   press("Escape");
-  await vi.waitFor(() => expect(form.classList.contains("asking")).toBe(false));
+  await vi.waitFor(() => expect(bar.classList.contains("asking")).toBe(false));
 }
 
 /**
@@ -122,9 +122,9 @@ function refusalText(): string {
 
 beforeEach(() => {
   canvas = createCanvas();
-  form = createLabelForm();
-  editor = createEditor(canvas, form);
-  document.body.replaceChildren(editor.region, form);
+  bar = createNamingBar();
+  editor = createEditor(canvas, bar);
+  document.body.replaceChildren(editor.region, bar);
 });
 
 describe("the editor", () => {
@@ -157,11 +157,11 @@ describe("a drag on empty canvas", () => {
 
     dragOut(40, 40, 140, 90);
 
-    expect(form.classList.contains("asking")).toBe(true);
+    expect(bar.classList.contains("asking")).toBe(true);
     // The middle of the bar's bottom edge sits on the middle of the rectangle's
     // top edge — (90, 40) in page coordinates — so its corner is half a width
     // left of that and a whole height above it.
-    expect([form.style.left, form.style.top]).toEqual(["-10px", "10px"]);
+    expect([bar.style.left, bar.style.top]).toEqual(["-10px", "10px"]);
   });
 
   it("puts no box on the canvas until a source comes back", () => {
@@ -187,8 +187,8 @@ describe("a drag on empty canvas", () => {
   it("empties the bar, so the next box starts from nothing typed", async () => {
     await makeBox([40, 40], [240, 140]);
 
-    expect(form.querySelector("input")?.value).toBe("");
-    expect(form.classList.contains("asking")).toBe(false);
+    expect(bar.querySelector("input")?.value).toBe("");
+    expect(bar.classList.contains("asking")).toBe(false);
   });
 });
 
@@ -240,7 +240,7 @@ describe("a source that will not typeset", () => {
     submit(BAD);
 
     await vi.waitFor(() => expect(refusalText()).toBeTruthy());
-    expect(form.querySelector("input")?.value).toBe(BAD);
+    expect(bar.querySelector("input")?.value).toBe(BAD);
   });
 
   it("is forgotten as soon as a box lands", async () => {
@@ -288,8 +288,8 @@ describe("giving up on a box", () => {
     dragOut(40, 40, 240, 140);
     press("Escape");
     await vi.waitFor(() => expect(canvas.querySelector("g.chrome")).toBeNull());
-    expect(form.classList.contains("asking")).toBe(false);
-    expect(form.style.left).toBe("");
+    expect(bar.classList.contains("asking")).toBe(false);
+    expect(bar.style.left).toBe("");
 
     const [box] = await makeBox([300, 300], [400, 400]);
 
@@ -337,7 +337,7 @@ describe("naming a term-dot", () => {
     dragOut(100, 100, 150, 120);
 
     expect(dotsOn()).toHaveLength(1);
-    expect(form.classList.contains("asking")).toBe(true);
+    expect(bar.classList.contains("asking")).toBe(true);
     await giveUp();
   });
 
@@ -371,7 +371,7 @@ describe("a dot's source that will not typeset", () => {
     await vi.waitFor(() => expect(refusalText()).toMatch(/undefined control sequence/iu));
     expect(dotsOn()).toHaveLength(1);
     expect(dotLabelsOn()).toHaveLength(0);
-    expect(form.querySelector("input")?.value).toBe(bad);
+    expect(bar.querySelector("input")?.value).toBe(bad);
   });
 
   it("does not stop the dot that follows it", async () => {

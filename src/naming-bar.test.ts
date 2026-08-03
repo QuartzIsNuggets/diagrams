@@ -2,14 +2,14 @@
 //
 // SPDX-License-Identifier: MIT
 
-// The LaTeX bar: the one place a source is typed, and what it answers with. It
+// The naming bar: the one place a source is typed, and what it answers with. It
 // draws nothing and typesets nothing, so what a source becomes is tested where
 // it happens — editor.test.ts for the gestures that ask, render-svg.test.ts for
 // the backend that sets one.
 
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { askForSource, clearSource, createLabelForm } from "./label-form";
+import { askForSource, clearSource, createNamingBar } from "./naming-bar";
 
 const LATEX = "\\Sigma_{(x:A)} P(x)";
 
@@ -37,11 +37,11 @@ function press(key: string): void {
 }
 
 beforeEach(() => {
-  form = createLabelForm();
+  form = createNamingBar();
   document.body.replaceChildren(form);
 });
 
-describe("the label form", () => {
+describe("the naming bar", () => {
   it("offers a text input and a submit affordance", () => {
     expect(input().type).toBe("text");
     expect(input().getAttribute("aria-label")).toBeTruthy();

@@ -11,7 +11,7 @@
 import type { Diagram, DotId, Extent, Point, Refusal } from "./diagram";
 import { addBox, addDot, boxAt, EMPTY_DIAGRAM, labelDot } from "./diagram";
 import { messageOf } from "./failure";
-import { askForSource, clearSource } from "./label-form";
+import { askForSource, clearSource } from "./naming-bar";
 import type { Unset } from "./render-svg";
 import {
   clearChrome,
@@ -42,13 +42,13 @@ export interface Editor {
  * The editor — the canvas, and the region a refused gesture is reported in —
  * wired and ready to append.
  *
- * `form` is the one place LaTeX is typed: the shell sends it to whatever is
+ * `bar` is the one place a source is typed: the shell sends it to whatever is
  * being named — the rectangle a box is drawn in, the dot just plopped — and
  * takes the source back from it, which is all either knows of the other. It
  * comes back already listening, there being no useful moment between a canvas
  * and a canvas that draws.
  */
-export function createEditor(canvas: SVGSVGElement, form: HTMLFormElement): Editor {
+export function createEditor(canvas: SVGSVGElement, bar: HTMLFormElement): Editor {
   const region = document.createElement("div");
   region.classList.add("editor");
 
@@ -60,7 +60,7 @@ export function createEditor(canvas: SVGSVGElement, form: HTMLFormElement): Edit
   refusal.setAttribute("role", "alert");
 
   region.append(canvas, refusal);
-  const shell = enableDrawing(canvas, form, refusal);
+  const shell = enableDrawing(canvas, bar, refusal);
   return { region, diagramNow: () => shell.current };
 }
 
@@ -99,7 +99,7 @@ function unsetWording(unset: readonly Unset[]): string {
  */
 interface Shell {
   readonly canvas: SVGSVGElement;
-  readonly form: HTMLFormElement;
+  readonly bar: HTMLFormElement;
   readonly refusal: HTMLParagraphElement;
   current: Diagram;
   naming: boolean;
@@ -195,10 +195,10 @@ async function nameDot(shell: Shell, at: Point): Promise<void> {
  */
 function enableDrawing(
   canvas: SVGSVGElement,
-  form: HTMLFormElement,
+  bar: HTMLFormElement,
   refusal: HTMLParagraphElement,
 ): Shell {
-  const shell: Shell = { canvas, form, refusal, current: EMPTY_DIAGRAM, naming: false };
+  const shell: Shell = { canvas, bar, refusal, current: EMPTY_DIAGRAM, naming: false };
   let making: "box" | "dot" = "box";
   draw(shell);
 
@@ -234,13 +234,13 @@ async function boxFrom(shell: Shell, drag: Extent): Promise<Diagram> {
   // At the label slot a new box takes, so a source is typed where the label it
   // becomes will be.
   const slot = toPagePoint(shell.canvas, { x: drag.x, y: drag.y + drag.h / 2 });
-  const source = await askForSource(shell.form, slot);
+  const source = await askForSource(shell.bar, slot);
   if (!source) {
     return shell.current;
   }
 
   const floor = await measureBox(source);
-  clearSource(shell.form);
+  clearSource(shell.bar);
   return addBox(shell.current, {
     source,
     x: drag.x,
@@ -260,12 +260,12 @@ async function boxFrom(shell: Shell, drag: Extent): Promise<Diagram> {
  * no name and the source stays in the input to be corrected.
  */
 async function dotNamed(shell: Shell, dot: DotId, at: Point): Promise<Diagram> {
-  const source = await askForSource(shell.form, toPagePoint(shell.canvas, at));
+  const source = await askForSource(shell.bar, toPagePoint(shell.canvas, at));
   if (!source) {
     return shell.current;
   }
 
   await vetSource(source);
-  clearSource(shell.form);
+  clearSource(shell.bar);
   return labelDot(shell.current, dot, source);
 }

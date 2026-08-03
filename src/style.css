@@ -38,9 +38,9 @@ body {
   stroke-dasharray: 6 4;
 }
 
-/* The controls float over the canvas rather than taking room from it: the LaTeX
+/* The controls float over the canvas rather than taking room from it: the naming
    bar in one bottom corner, the Export button in the other. */
-.label-form,
+.naming-bar,
 .export-controls {
   position: fixed;
   bottom: 16px;
@@ -49,7 +49,7 @@ body {
     sans-serif;
 }
 
-.label-form {
+.naming-bar {
   left: 16px;
   display: flex;
   align-items: center;
@@ -64,7 +64,7 @@ body {
    fixed element a composited layer, and the layer lands on the fractional
    offset half a `ch`-derived width comes to, which WebKit resamples into a
    blur. */
-.label-form.asking {
+.naming-bar.asking {
   bottom: auto;
 }
 
@@ -81,20 +81,22 @@ body {
 
 /* Form controls do not inherit type by default; the children of both have to be
    told to take theirs. */
-.label-input,
-.label-form button,
+.naming-bar input,
+.naming-bar button,
 .export-controls button {
   font: inherit;
 }
 
-.label-input {
+/* The bar's one input, reached through the bar: a class of its own would name
+   something the bar's own already says. */
+.naming-bar input {
   width: 32ch;
   padding: 6px 8px;
   border: 1px solid #cccccc;
   border-radius: 4px;
 }
 
-.label-form button,
+.naming-bar button,
 .export-button {
   padding: 6px 12px;
   border: 1px solid #cccccc;
@@ -111,7 +113,7 @@ body {
 }
 
 /* A filesystem refusal names a path and can run long. Wrapping it keeps the
-   column from spreading across the canvas into the LaTeX bar. */
+   column from spreading across the canvas into the naming bar. */
 .export-error {
   max-width: 40ch;
 }

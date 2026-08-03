@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 // The LaTeX-to-geometry engine. The bar that drives it is covered in
-// label-form.test.ts.
+// naming-bar.test.ts.
 
 import { describe, expect, it, vi } from "vitest";
 
