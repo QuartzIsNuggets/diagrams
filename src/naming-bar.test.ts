@@ -21,8 +21,30 @@ const AT = { left: 300, top: 200 };
 /** What a source the backend will not set is refused with. */
 const WHY = "undefined control sequence";
 
-/** The width every bar raised in these tests reports having. */
+/** The width and height every bar raised in these tests reports having. */
 const WIDTH = 200;
+const HEIGHT = 30;
+
+/**
+ * How far the bar's body stands off the mark its tail points at, and how near
+ * a corner that tail may come.
+ *
+ * Read off the module's own look numbers rather than imported: what the bar
+ * leaves between itself and a dot is the bar's to change, and a test naming it
+ * is what says the change was meant.
+ */
+const STANDOFF = 14;
+const TAIL_INSET = 16;
+
+/** Where along the bar's own top or bottom edge the tail is pointing. */
+function tailAt(): string {
+  return bar().style.getPropertyValue("--tail-at");
+}
+
+/** Which side of its mark the bar took. */
+function under(): boolean {
+  return bar().classList.contains("under-mark");
+}
 
 /** A vetting that takes every source: what a working backend does. */
 function takes(source: Source): Promise<Source> {
@@ -64,10 +86,16 @@ function reasonText(): string {
   return bar().querySelector(".naming-error")?.textContent ?? "";
 }
 
-/** Type `latex` into the bar and press its button, the way a user would. */
+/**
+ * Type `latex` into the bar and commit it, the way a user would.
+ *
+ * `requestSubmit` because there is no button to click: what a user presses is
+ * Enter, and a form whose only field is a text input submits implicitly — which
+ * jsdom does not do, having no implicit submission at all.
+ */
 function submit(latex: string): void {
   input().value = latex;
-  bar().querySelector<HTMLButtonElement>("button[type=submit]")!.click();
+  bar().requestSubmit();
 }
 
 function press(key: string): void {
@@ -88,12 +116,12 @@ async function settled(): Promise<void> {
 
 beforeEach(() => {
   document.body.replaceChildren();
-  // jsdom has no layout, so every `getBoundingClientRect()` is zeros — and half
-  // the bar's width is where it goes, the module centring it on the point
-  // rather than translating it there. Stubbed on the prototype because there is
-  // no bar to stub until a question raises one.
+  // jsdom has no layout, so every `getBoundingClientRect()` is zeros — and the
+  // bar's own rectangle is what it finds room by, the module placing it rather
+  // than translating it there. Stubbed on the prototype because there is no bar
+  // to stub until a question raises one.
   vi.spyOn(HTMLFormElement.prototype, "getBoundingClientRect").mockReturnValue(
-    new DOMRect(0, 0, WIDTH, 30),
+    new DOMRect(0, 0, WIDTH, HEIGHT),
   );
 });
 
@@ -140,21 +168,26 @@ describe("the bar a question summons", () => {
   it("arrives at the mark, ready to be typed into", () => {
     void askForSource(AT, takes);
 
-    // Hung by the middle of its bottom edge: half a width left of the point,
-    // and as far up from the foot of the window as the point itself is.
-    expect([bar().style.left, bar().style.bottom]).toEqual([
+    // Above the mark and standing clear of it: the tail spans the gap, so the
+    // bar's bottom edge is a standoff up from the point and its middle is over
+    // the point, which is where the tail comes down.
+    expect(under()).toBe(false);
+    expect([bar().style.left, bar().style.bottom, tailAt()]).toEqual([
       `${String(AT.left - WIDTH / 2)}px`,
-      `${String(window.innerHeight - AT.top)}px`,
+      `${String(window.innerHeight - AT.top + STANDOFF)}px`,
+      `${String(WIDTH / 2)}px`,
     ]);
     expect(document.activeElement).toBe(input());
   });
 
-  it("offers a text input and a submit affordance", () => {
+  it("offers a text input and nothing to press", () => {
     void askForSource(AT, takes);
 
     expect(input().type).toBe("text");
     expect(input().getAttribute("aria-label")).toBeTruthy();
-    expect(bar().querySelector("button[type=submit]")).not.toBeNull();
+    // Enter commits and Escape gives up; a button saying one of them and
+    // nothing of the other was advertising half the contract.
+    expect(bar().querySelector("button")).toBeNull();
   });
 
   it("has a line for a refused source before it has one to refuse", () => {
@@ -163,7 +196,8 @@ describe("the bar a question summons", () => {
     const line = bar().querySelector(".naming-error");
     expect(line?.getAttribute("role")).toBe("alert");
     expect(line?.textContent).toBe("");
-    // Above the input, not beside it: the source it is about is the line below.
+    // The input's far side from the mark, which above the mark is the line over
+    // it: the source the reason is about is the one still in the input.
     expect(line?.nextElementSibling?.tagName).toBe("INPUT");
   });
 
@@ -174,6 +208,74 @@ describe("the bar a question summons", () => {
     bar().dispatchEvent(event);
 
     expect(event.defaultPrevented).toBe(true);
+  });
+});
+
+/** A mark too near the head of the window for a bar to stand above it. */
+const HIGH = { left: 300, top: STANDOFF + HEIGHT - 1 };
+
+describe("the side of the mark the bar takes", () => {
+  it("is the other one where it cannot stand above, tail with it", () => {
+    void askForSource(HIGH, takes);
+
+    // Hung by its top edge now, which is the edge the tail is on, so the same
+    // standoff is measured the other way and a refusal grows it downward.
+    expect(under()).toBe(true);
+    expect([bar().style.top, bar().style.bottom]).toEqual([`${String(HIGH.top + STANDOFF)}px`, ""]);
+    expect(tailAt()).toBe(`${String(WIDTH / 2)}px`);
+  });
+
+  it("puts the refusal line below the input there, away from the mark", () => {
+    void askForSource(HIGH, takes);
+
+    // Same tree either way — the stylesheet reads the side and reverses the
+    // column, so the line is on the input's far side from the mark whichever
+    // side that is.
+    expect(bar().classList.contains("under-mark")).toBe(true);
+    expect(bar().firstElementChild?.classList.contains("naming-error")).toBe(true);
+  });
+});
+
+describe("the room the bar's body finds along an edge", () => {
+  it("shifts it inside the window, the tail sliding to keep pointing", () => {
+    const near = { left: 40, top: 200 };
+
+    void askForSource(near, takes);
+
+    // Centred would have hung it off the left edge, so the body sits flush
+    // against it and the tail moves to where the mark is along that edge.
+    expect(bar().style.left).toBe("0px");
+    expect(tailAt()).toBe(`${String(near.left)}px`);
+  });
+
+  it("shifts it at the other edge too", () => {
+    const near = { left: window.innerWidth - 40, top: 200 };
+
+    void askForSource(near, takes);
+
+    expect(bar().style.left).toBe(`${String(window.innerWidth - WIDTH)}px`);
+    expect(tailAt()).toBe(`${String(WIDTH - 40)}px`);
+  });
+
+  it("stops the tail short of a corner, a mark that extreme being off the edge", () => {
+    void askForSource({ left: 2, top: 200 }, takes);
+
+    expect(bar().style.left).toBe("0px");
+    expect(tailAt()).toBe(`${String(TAIL_INSET)}px`);
+  });
+
+  it("makes no room for the export control and may sit over it", () => {
+    const controls = document.createElement("div");
+    controls.classList.add("export-controls");
+    document.body.append(controls);
+    const corner = { left: window.innerWidth - WIDTH / 2, top: 200 };
+
+    void askForSource(corner, takes);
+
+    // Placed on its mark as if the corner were empty: the bar is transient and
+    // is the thing being answered, so it is the control that is sat over.
+    expect(bar().style.left).toBe(`${String(window.innerWidth - WIDTH)}px`);
+    expect(tailAt()).toBe(`${String(WIDTH / 2)}px`);
   });
 });
 
@@ -220,13 +322,32 @@ describe("a source the vetting refuses", () => {
     submit(LATEX);
     await settled();
 
-    // Unmoved: the reason lands on the line above, so what the bar hangs by is
-    // where it was and the input has not been pushed onto the mark.
-    expect([bar().style.left, bar().style.bottom]).toEqual([
+    // Unmoved: the bar hangs by the edge its tail is on and the reason lands on
+    // the far side of the input, so the bar grows away from the mark and the
+    // tail stays on it.
+    expect([bar().style.left, bar().style.bottom, tailAt()]).toEqual([
       `${String(AT.left - WIDTH / 2)}px`,
-      `${String(window.innerHeight - AT.top)}px`,
+      `${String(window.innerHeight - AT.top + STANDOFF)}px`,
+      `${String(WIDTH / 2)}px`,
     ]);
     expect(input().value).toBe(LATEX);
+  });
+
+  it("does not send the bar to the other side of its mark", async () => {
+    // Standing above its mark by exactly nothing to spare.
+    const tight = { left: 300, top: STANDOFF + HEIGHT };
+    void askForSource(tight, refusing(1));
+    // The reason's line, arriving: a bar choosing its side again now would find
+    // no room above and flip under the mark being read.
+    vi.spyOn(HTMLFormElement.prototype, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 0, WIDTH, 2 * HEIGHT),
+    );
+
+    submit(LATEX);
+    await settled();
+
+    expect(under()).toBe(false);
+    expect(bar().style.bottom).toBe(`${String(window.innerHeight - tight.top + STANDOFF)}px`);
   });
 
   it("puts the reason on the line above the input, naming no source", async () => {
@@ -320,7 +441,7 @@ describe("a second question asked while one is open", () => {
     void askForSource({ left: 500, top: 400 }, takes);
 
     expect(document.querySelectorAll(".naming-bar")).toHaveLength(1);
-    expect(bar().style.bottom).toBe(`${String(window.innerHeight - 400)}px`);
+    expect(bar().style.bottom).toBe(`${String(window.innerHeight - 400 + STANDOFF)}px`);
   });
 
   it("gives up on the one it displaced, rather than leaving it unanswered", async () => {

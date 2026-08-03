@@ -18,6 +18,9 @@ import { createEditor } from "./editor";
 /** The width every bar summoned in these tests reports having. */
 const BAR_WIDTH = 200;
 
+/** How far the bar's body stands off the mark its tail points at. */
+const STANDOFF = 14;
+
 let canvas: SVGSVGElement;
 let editor: Editor;
 
@@ -73,15 +76,20 @@ function bar(): HTMLFormElement {
   return found;
 }
 
-/** Type `latex` into the bar and press its button, the way a user would. */
+/**
+ * Type `latex` into the bar and commit it, the way a user would.
+ *
+ * `requestSubmit` because the bar has nothing to press: what a user presses is
+ * Enter, which submits a form whose only field is a text input — implicitly,
+ * which jsdom does not do at all.
+ */
 function submit(latex: string): void {
   const input = bar().querySelector("input");
-  const button = bar().querySelector<HTMLButtonElement>("button[type=submit]");
-  if (!input || !button) {
+  if (!input) {
     throw new Error("the bar has lost its input");
   }
   input.value = latex;
-  button.click();
+  bar().requestSubmit();
 }
 
 function press(key: string): void {
@@ -186,14 +194,16 @@ describe("the editor", () => {
 
 describe("a drag on empty canvas", () => {
   it("summons a bar for a type expression, at the slot the label will take", () => {
-    dragOut(40, 40, 140, 90);
+    // Drawn well inside the window, so what is read here is the slot and not
+    // the room the bar found: finding room is naming-bar.test.ts's own.
+    dragOut(140, 140, 340, 240);
 
-    // The middle of the bar's bottom edge sits on the middle of the rectangle's
-    // top edge — (90, 40) in page coordinates — so the bar hangs half a width
-    // left of that, and that far up from the foot of the window.
+    // The bar's tail points at the middle of the rectangle's top edge — (240,
+    // 140) in page coordinates — so the bar hangs half a width left of that,
+    // and a standoff clear of it, the dashed wall staying visible under the tail.
     expect([bar().style.left, bar().style.bottom]).toEqual([
-      `${String(90 - BAR_WIDTH / 2)}px`,
-      `${String(window.innerHeight - 40)}px`,
+      `${String(240 - BAR_WIDTH / 2)}px`,
+      `${String(window.innerHeight - 140 + STANDOFF)}px`,
     ]);
   });
 
@@ -391,11 +401,12 @@ describe("naming a term-dot", () => {
     dragOut(100, 100, 150, 120);
 
     expect(dotsOn()).toHaveLength(1);
-    // At the dot itself — (150, 120) in page coordinates — rather than where the
-    // glyphs will land, which is the backend's own business.
+    // Aimed at the dot itself — (150, 120) in page coordinates — rather than at
+    // where the glyphs will land, which is the backend's own business, and
+    // standing a standoff clear so the dot is still there to be seen.
     expect([bar().style.left, bar().style.bottom]).toEqual([
       `${String(150 - BAR_WIDTH / 2)}px`,
-      `${String(window.innerHeight - 120)}px`,
+      `${String(window.innerHeight - 120 + STANDOFF)}px`,
     ]);
     await giveUp();
   });

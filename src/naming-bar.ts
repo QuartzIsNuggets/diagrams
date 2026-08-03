@@ -104,12 +104,51 @@ interface Bar {
 }
 
 /**
+ * The tail's height, and half the edge it stands on.
+ *
+ * The bar's own number, the way the room a term-dot's label keeps off its dot
+ * is the drawing's: it says nothing about a diagram. The stylesheet draws the
+ * triangle, and is told this rather than told it twice.
+ */
+const TAIL = 8;
+
+/**
+ * How far short of the mark the tail's point stops.
+ *
+ * The bar aims at its mark and does not land on it: a term-dot is a few units
+ * across and a box's wall is a hairline, and either would be under the bar the
+ * moment it touched. So the mark stays there to be read while it is being
+ * named.
+ */
+const MARK_CLEARANCE = 6;
+
+/** How far the bar's body stands off its mark: the tail, and the room it keeps. */
+const STANDOFF = TAIL + MARK_CLEARANCE;
+
+/**
+ * How near a corner the tail's point may come.
+ *
+ * A mark far enough out to reach this clamp is within a few pixels of the edge
+ * of the window, so the tail points a hair off it — which is a better failure
+ * than a tail hanging off a corner, where it would read as belonging to neither
+ * edge.
+ */
+const TAIL_INSET = 16;
+
+/**
  * Put a bar on the page at `at`, focused and ready to be typed into.
  *
  * Built here rather than handed in: a bar is raised by the question and goes
  * with it, so there is no moment at which one exists for a page to hold — which
  * is why it appends itself to the document instead of coming back for someone to
  * place. Where it goes is `at` and nowhere else, and the page has no other say.
+ *
+ * There is no button. Enter commits and Escape gives up, and a control saying
+ * one of them while saying nothing of the other was advertising half the
+ * contract — where the bar cannot be reached without typing into it, so the
+ * hands are already on both. The one input left is also what makes Enter
+ * submit: a form whose only field is a text input is submitted implicitly, so
+ * nothing has to listen for the key.
  *
  * The refusal line is in the tree before it has anything to say, so a refusal is
  * announced rather than appearing from nowhere. It answers one question — *why
@@ -121,6 +160,7 @@ interface Bar {
 function raise(at: PagePoint): Bar {
   const form = document.createElement("form");
   form.classList.add("naming-bar");
+  form.style.setProperty("--tail-size", `${String(TAIL)}px`);
 
   const input = document.createElement("input");
   input.type = "text";
@@ -128,17 +168,15 @@ function raise(at: PagePoint): Bar {
   input.placeholder = "\\Sigma_{(x:A)} P(x)";
   input.setAttribute("aria-label", "LaTeX label");
 
-  const button = document.createElement("button");
-  button.type = "submit";
-  button.textContent = "Typeset";
-
-  // Above the input, and repeating no source back: the source it is about is on
-  // the line below, still there to be corrected.
+  // On the input's far side from the mark, wherever that turns out to be: a
+  // refusal then grows the bar away from what it is asking about rather than
+  // over it, and the edge carrying the tail stays the input's own. It repeats
+  // no source back — the source is in the input, still there to be corrected.
   const reason = document.createElement("p");
   reason.classList.add("naming-error");
   reason.setAttribute("role", "alert");
 
-  form.append(reason, input, button);
+  form.append(reason, input);
   document.body.append(form);
   hangAt(form, at);
   input.focus();
@@ -146,25 +184,57 @@ function raise(at: PagePoint): Bar {
 }
 
 /**
- * Hang the bar off `at`: the point is where the label goes, and it is the middle
- * of the bar's bottom edge that goes there.
+ * Hang the bar off `at`, tail first: the point is the mark being named, and it
+ * is the tail that is aimed at it.
  *
- * By that edge rather than by its top, so a refusal arriving on the line above
- * the input grows the bar upward, away from the mark it is about, instead of
- * pushing the input down over it. Which leaves the width the one thing measured
- * — halved, to centre the bar on the point — and a width is not something a
- * refusal changes.
+ * The tail owns the mark and the body finds the room. Position alone stopped
+ * saying which mark is being named once there was no corner the bar visibly
+ * travelled from — term-dots stand as little as a separation apart, and a box's
+ * wall is a hairline — so what points is a tail, and the body may go wherever it
+ * has to for the tail to keep pointing. Above the mark unless the bar has
+ * nowhere to be there, and then below; centred on the mark unless that would put
+ * it out of the window, and then shifted along with the tail sliding the other
+ * way to stay on the mark. The tail keeps {@link TAIL_INSET} off both corners,
+ * which is the one case it stops being exact.
  *
- * Measured rather than left to a percentage transform, which would be the
- * shorter way to say it and cannot be used: a transform makes a fixed element a
- * composited layer, and the layer lands on the fractional offset half a
- * `ch`-derived width comes to, which WebKit resamples into a blur. The bar is on
- * the page by now, so there is a width to measure.
+ * The side is settled here and never revisited, and the bar is anchored by the
+ * edge the tail is on — `bottom` above the mark, `top` below it — so a refusal
+ * arriving grows the bar from its far edge. Neither the tail nor the thing being
+ * read moves, which is the whole reason the side is not recomputed: a bar that
+ * re-chose its side on the height it happens to have would teleport under a
+ * reader's eyes at the worst moment.
+ *
+ * Fitted inside the **window**, not the canvas. The two are the same rectangle
+ * today; the bar is page chrome, and if the canvas ever stops filling the window
+ * it is the window the bar has to stay inside. It makes no room for the export
+ * control and may sit over it: the bar is transient and is the thing being
+ * answered, and teaching it to dodge chrome grows a term every time chrome is
+ * added.
+ *
+ * Measured and placed rather than left to a percentage transform, which would be
+ * the shorter way to say it and cannot be used: a transform makes a fixed
+ * element a composited layer, and the layer lands on the fractional offset half
+ * a `ch`-derived width comes to, which WebKit resamples into a blur. The bar is
+ * on the page by now, so there is a rectangle to measure.
  */
 function hangAt(form: HTMLFormElement, at: PagePoint): void {
-  const { width } = form.getBoundingClientRect();
-  form.style.left = `${String(at.left - width / 2)}px`;
-  form.style.bottom = `${String(window.innerHeight - at.top)}px`;
+  const { width, height } = form.getBoundingClientRect();
+
+  const under = at.top - STANDOFF - height < 0;
+  form.classList.toggle("under-mark", under);
+  if (under) {
+    form.style.top = `${String(at.top + STANDOFF)}px`;
+  } else {
+    form.style.bottom = `${String(window.innerHeight - (at.top - STANDOFF))}px`;
+  }
+
+  const left = Math.max(0, Math.min(at.left - width / 2, window.innerWidth - width));
+  form.style.left = `${String(left)}px`;
+  const along = at.left - left;
+  form.style.setProperty(
+    "--tail-at",
+    `${String(Math.min(Math.max(along, TAIL_INSET), width - TAIL_INSET))}px`,
+  );
 }
 
 /**

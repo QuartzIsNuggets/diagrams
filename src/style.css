@@ -41,9 +41,9 @@ body {
 /* The controls float over the canvas rather than taking room from it. Which
    corner is not one of them: the naming bar is on the page only while it is
    asking about a mark, and it is at that mark, so naming-bar.ts sets the
-   `left`/`bottom` that puts it there and there is no rule here to say where it
-   rests. The Export button acts on the whole diagram, has no mark to go to, and
-   keeps its corner. */
+   `left` and the `top`/`bottom` that put it there and there is no rule here to
+   say where it rests. The Export button acts on the whole diagram, has no mark
+   to go to, and keeps its corner. */
 .naming-bar,
 .export-controls {
   position: fixed;
@@ -52,21 +52,47 @@ body {
     sans-serif;
 }
 
-/* The line a refused source is explained on, then the input and its button —
-   two rows reached by wrapping rather than by a row of its own, the bar having
-   nothing on the first until something is refused. The bar hangs by its bottom
-   edge, which is the edge that sits on the mark, so that line arriving lifts the
-   input rather than pushing it down over what it is asking about. */
+/* One column as wide as its input, so the edge the tail stands on spans the
+   input and nothing else. The refusal line is above the input by default and
+   below it once the bar is under its mark, which is the same rule read twice:
+   the line lands on the input's far side from the mark, so a refusal grows the
+   bar away from what it is asking about and the tail's edge does not move. */
 .naming-bar {
+  width: 32ch;
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  flex-direction: column;
   gap: 8px;
 }
 
-.naming-error {
-  flex-basis: 100%;
-  max-width: 40ch;
+.naming-bar.under-mark {
+  flex-direction: column-reverse;
+}
+
+/* The tail, on whichever edge faces the mark: a triangle in the input's border
+   colour, so it reads as that border carried to a point rather than a shape
+   stuck on. Placed along the edge by `left` and never by a transform — a
+   transform would make this a composited layer landing on a fractional offset,
+   which WebKit resamples into a blur. Both custom properties are naming-bar.ts's
+   own: it is the module that knows which mark the tail is aimed at, and the size
+   travels with them so the triangle and the room the body stands off by are the
+   one number. */
+.naming-bar::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: calc(var(--tail-at) - var(--tail-size));
+  width: 0;
+  height: 0;
+  border: var(--tail-size) solid transparent;
+  border-bottom: 0;
+  border-top-color: #cccccc;
+}
+
+.naming-bar.under-mark::after {
+  top: auto;
+  bottom: 100%;
+  border-top: 0;
+  border-bottom: var(--tail-size) solid #cccccc;
 }
 
 /* A column pinned by its bottom-right corner: a message appearing above the
@@ -84,21 +110,19 @@ body {
 /* Form controls do not inherit type by default; the children of both have to be
    told to take theirs. */
 .naming-bar input,
-.naming-bar button,
 .export-controls button {
   font: inherit;
 }
 
 /* The bar's one input, reached through the bar: a class of its own would name
-   something the bar's own already says. */
+   something the bar's own already says. It takes the bar's whole width by
+   stretching, the bar being the column it is the widest thing in. */
 .naming-bar input {
-  width: 32ch;
   padding: 6px 8px;
   border: 1px solid #cccccc;
   border-radius: 4px;
 }
 
-.naming-bar button,
 .export-button {
   padding: 6px 12px;
   border: 1px solid #cccccc;
@@ -108,8 +132,8 @@ body {
 
 /* Empty until something is refused — a gesture, a source, a write — so they take
    no room the rest of the time. The bar's has to say so outright: an empty flex
-   item still claims a wrapped line, which would hold the input that far clear of
-   its mark for as long as nothing is wrong. */
+   item still claims the gap below it, which would hold the input that far clear
+   of its mark for as long as nothing is wrong. */
 .canvas-error,
 .export-error,
 .naming-error {
