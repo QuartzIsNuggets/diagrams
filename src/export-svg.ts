@@ -2,7 +2,9 @@
 //
 // SPDX-License-Identifier: MIT
 
+import type { Diagram } from "./diagram";
 import { messageOf } from "./failure";
+import { drawDocument } from "./render-svg";
 
 import { writeFile } from "./writer";
 
@@ -13,46 +15,49 @@ const EXPORT_FILENAME = "diagram.svg";
 const SVG_MEDIA_TYPE = "image/svg+xml;charset=utf-8";
 
 /**
- * Serialize `canvas` into a standalone SVG document.
+ * The bytes `diagram` exports as: a standalone SVG document drawing it.
  *
- * The live canvas is sized by CSS and carries no `width`, `height` or
- * `viewBox`, so serializing it as-is would give a document with no dimensions
- * at all — legal XML that renders as nothing. The three are added here, taken
- * from the canvas's rendered box: the render backend draws from that box's own
- * corner (see `render-svg.ts`), so `0 0 width height` is exactly the frame the
- * whole diagram is drawn in and the export is 1:1 with the screen.
+ * An export is a drawing of the diagram rather than a copy of the screen. The
+ * SVG backend is asked for a document of its own, framed by the ink in it, so
+ * the same diagram comes out the same file at every window size and no laid-out
+ * page is needed to make one. That the diagram is what an export is emitted
+ * from is the seam a second backend joins at: what changes for TikZ is which one
+ * is asked, not how a file leaves.
  *
  * Everything the marks need to render travels with them — glyphs are inline
  * `<path>` geometry and colours are presentation attributes — so the result
  * stands on its own, with no reference back to this page's stylesheet, fonts,
  * or `<defs>`.
+ *
+ * Every label is expected already set: drawing is synchronous, so a source the
+ * backend has never typeset exports as a mark with no name rather than as a
+ * failure — the same thing it looks like on screen. A caller that did not put
+ * the diagram there by gesture owes it a `setLabelsOf` first, which is also the
+ * one thing that reports a source that will not set at all.
  */
-export function serializeCanvas(canvas: SVGSVGElement): string {
-  const { width, height } = canvas.getBoundingClientRect();
-
-  // A clone, so framing the export never disturbs what is on screen.
-  const standalone = canvas.cloneNode(true) as SVGSVGElement;
-  standalone.setAttribute("width", String(width));
-  standalone.setAttribute("height", String(height));
-  standalone.setAttribute("viewBox", `0 0 ${String(width)} ${String(height)}`);
-
+export function serializeDiagram(diagram: Diagram): string {
   // Not `outerHTML`: that serializes by HTML rules, which leave the SVG
   // namespace to be inferred from the surrounding document — there isn't one
   // here. XMLSerializer declares it on the root, because the element genuinely
   // is in it, and that declaration is what makes the file parseable alone.
-  return `<?xml version="1.0" encoding="UTF-8"?>\n${new XMLSerializer().serializeToString(standalone)}\n`;
+  return `<?xml version="1.0" encoding="UTF-8"?>\n${new XMLSerializer().serializeToString(drawDocument(diagram))}\n`;
 }
 
 /**
- * The export affordance — the button that exports `canvas`, and the region that
- * reports a write the filesystem refused — wired and ready to append.
+ * The export affordance — the button that exports whatever `diagramNow` answers
+ * with, and the region that reports a write the filesystem refused — wired and
+ * ready to append.
+ *
+ * It is asked for the diagram at the moment the button is pressed rather than
+ * handed one: a diagram is a value, so the one held when this was built is the
+ * one the editor has since moved on from.
  *
  * It comes back already listening rather than as an inert element a caller has
  * to remember to enable: the button exists for this one action, so there is no
  * useful moment between the two and nothing for a caller to get in the wrong
  * order. Where it goes on the page is still theirs to decide.
  */
-export function createExportControls(canvas: SVGSVGElement): HTMLDivElement {
+export function createExportControls(diagramNow: () => Diagram): HTMLDivElement {
   const controls = document.createElement("div");
   controls.classList.add("export-controls");
 
@@ -75,13 +80,13 @@ export function createExportControls(canvas: SVGSVGElement): HTMLDivElement {
   // anchored to the bottom of the viewport, so it grows upward and the button
   // stays under the cursor that just pressed it.
   controls.append(error, button);
-  enableExporting(canvas, button, error);
+  enableExporting(diagramNow, button, error);
   return controls;
 }
 
 /**
- * Make pressing `button` emit `canvas` as a standalone `.svg` file, and report
- * into `error` when the filesystem will not take it.
+ * Make pressing `button` emit the diagram as a standalone `.svg` file, and
+ * report into `error` when the filesystem will not take it.
  *
  * Where those bytes end up is `writeFile`'s business and differs by surface, so
  * a completed write is dropped rather than reported: an export is one-way, and
@@ -93,13 +98,13 @@ export function createExportControls(canvas: SVGSVGElement): HTMLDivElement {
  * refusal empties it — including a cancelled dialog, which failed at nothing.
  */
 function enableExporting(
-  canvas: SVGSVGElement,
+  diagramNow: () => Diagram,
   button: HTMLButtonElement,
   error: HTMLParagraphElement,
 ): void {
   button.addEventListener("click", () => {
     writeFile({
-      contents: serializeCanvas(canvas),
+      contents: serializeDiagram(diagramNow()),
       filename: EXPORT_FILENAME,
       mediaType: SVG_MEDIA_TYPE,
     })

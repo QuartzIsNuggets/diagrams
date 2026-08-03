@@ -11,11 +11,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createCanvas } from "./canvas";
+import { EMPTY_DIAGRAM } from "./diagram";
+import type { Editor } from "./editor";
 import { createEditor } from "./editor";
 import { createLabelForm } from "./label-form";
 
 let canvas: SVGSVGElement;
 let form: HTMLFormElement;
+let editor: Editor;
 
 function boxesOn(): SVGRectElement[] {
   return [...canvas.querySelectorAll<SVGRectElement>("g.diagram g.box > rect")];
@@ -120,13 +123,25 @@ function refusalText(): string {
 beforeEach(() => {
   canvas = createCanvas();
   form = createLabelForm();
-  document.body.replaceChildren(createEditor(canvas, form), form);
+  editor = createEditor(canvas, form);
+  document.body.replaceChildren(editor.region, form);
 });
 
 describe("the editor", () => {
   it("draws the diagram it starts with, which holds nothing", () => {
     expect(canvas.querySelector("g.diagram")).not.toBeNull();
     expect(boxesOn()).toHaveLength(0);
+  });
+
+  it("hands out the diagram it is holding, which is what is on screen", async () => {
+    expect(editor.diagramNow()).toEqual(EMPTY_DIAGRAM);
+
+    await makeBox([40, 40], [240, 200]);
+
+    // Read again, not held from before: a gesture makes the *next* diagram, so
+    // a caller keeping the first would be holding an empty one for good.
+    expect(editor.diagramNow().boxes).toHaveLength(1);
+    expect(editor.diagramNow().boxes[0]?.source).toBe("A");
   });
 
   it("has a region for a refusal before it has anything to refuse", () => {

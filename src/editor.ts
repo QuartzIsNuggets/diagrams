@@ -24,6 +24,21 @@ import {
 } from "./render-svg";
 
 /**
+ * What an editor hands its page: the region to append, and the diagram it is
+ * currently holding.
+ *
+ * A reader rather than the diagram itself, since the diagram it holds is a
+ * different value after every gesture — whoever wants the drawing as it stands,
+ * the export being the first, has to ask at the moment they want it. It is the
+ * one way out of the shell, and it is read-only: nothing changes a diagram but
+ * a gesture.
+ */
+export interface Editor {
+  readonly region: HTMLDivElement;
+  readonly diagramNow: () => Diagram;
+}
+
+/**
  * The editor — the canvas, and the region a refused gesture is reported in —
  * wired and ready to append.
  *
@@ -33,9 +48,9 @@ import {
  * comes back already listening, there being no useful moment between a canvas
  * and a canvas that draws.
  */
-export function createEditor(canvas: SVGSVGElement, form: HTMLFormElement): HTMLDivElement {
-  const editor = document.createElement("div");
-  editor.classList.add("editor");
+export function createEditor(canvas: SVGSVGElement, form: HTMLFormElement): Editor {
+  const region = document.createElement("div");
+  region.classList.add("editor");
 
   // In the tree before it has anything to say, so a refusal is announced rather
   // than appearing from nowhere. One region, not one per gesture: "why did
@@ -44,9 +59,9 @@ export function createEditor(canvas: SVGSVGElement, form: HTMLFormElement): HTML
   refusal.classList.add("canvas-error");
   refusal.setAttribute("role", "alert");
 
-  editor.append(canvas, refusal);
-  enableDrawing(canvas, form, refusal);
-  return editor;
+  region.append(canvas, refusal);
+  const shell = enableDrawing(canvas, form, refusal);
+  return { region, diagramNow: () => shell.current };
 }
 
 /**
@@ -175,12 +190,14 @@ async function nameDot(shell: Shell, at: Point): Promise<void> {
  *
  * A press while a question is open starts nothing: one input holds one question,
  * and a press that quietly cancelled it would throw away a typed source.
+ *
+ * The shell comes back so what is on screen can be read out of it.
  */
 function enableDrawing(
   canvas: SVGSVGElement,
   form: HTMLFormElement,
   refusal: HTMLParagraphElement,
-): void {
+): Shell {
   const shell: Shell = { canvas, form, refusal, current: EMPTY_DIAGRAM, naming: false };
   let making: "box" | "dot" = "box";
   draw(shell);
@@ -201,6 +218,7 @@ function enableDrawing(
       void (making === "box" ? named(shell, boxFrom(shell, drag)) : nameDot(shell, at));
     },
   );
+  return shell;
 }
 
 /**

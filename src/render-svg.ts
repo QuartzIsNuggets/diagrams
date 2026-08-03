@@ -38,6 +38,17 @@ const DOT_LABEL_GAP = 4;
 const BOX_STROKE = 2;
 
 /**
+ * Room kept between the outermost ink and the edge of an exported file, in
+ * diagram units.
+ *
+ * This backend's own, like every other number here: how much air a drawing is
+ * given in the file it is emitted as is a fact about the emitted file, and the
+ * TikZ emitter will have its own answer. A placeholder until a drawing argues
+ * for another.
+ */
+const EXPORT_MARGIN = 16;
+
+/**
  * How big a term-dot is drawn: the largest the model's separation allows.
  *
  * Two dots exactly a {@link DOT_SEPARATION} apart touch at a point and no more,
@@ -67,6 +78,31 @@ function toUnits(fontUnits: number): number {
 }
 
 /**
+ * What drawing a diagram comes to: the marks, and how much room each one takes.
+ *
+ * The extents are collected as the marks are made rather than measured
+ * afterwards. Where a mark goes is worked out here anyway — a label's origin
+ * needs its run's own metrics — so asking again later would be re-deriving what
+ * was in hand, and asking a laid-out page would be reading the drawing back.
+ */
+interface Drawing {
+  readonly root: SVGGElement;
+  readonly extents: readonly Extent[];
+}
+
+/** Draw `diagram` under the one flip, in the diagram's own coordinates. */
+function drawDiagram(diagram: Diagram): Drawing {
+  const extents: Extent[] = [];
+  const root = document.createElementNS(SVG_NS, "g");
+  root.classList.add("diagram");
+  root.setAttribute("transform", FLIP);
+  for (const box of diagram.boxes) {
+    root.append(drawBox(box, dotsIn(diagram, box), extents));
+  }
+  return { root, extents };
+}
+
+/**
  * Draw `diagram` into `canvas`, replacing whatever was drawn from it before.
  *
  * A redraw rebuilds: the drawing carries no state worth diffing, and a keyed
@@ -74,15 +110,11 @@ function toUnits(fontUnits: number): number {
  * drew is replaced, so marks the canvas holds for other reasons stay put.
  */
 export function renderDiagram(canvas: SVGSVGElement, diagram: Diagram): void {
-  const root = document.createElementNS(SVG_NS, "g");
-  root.classList.add("diagram");
-  root.setAttribute("transform", FLIP);
+  const { root } = drawDiagram(diagram);
   // Ink, never a pointer target: what a press lands inside is the diagram's
-  // question to answer, so nothing is ever read back off the drawing.
+  // question to answer, so nothing is ever read back off the drawing. On screen
+  // only — an exported file has no pointer to keep off it.
   root.setAttribute("pointer-events", "none");
-  for (const box of diagram.boxes) {
-    root.append(drawBox(box, dotsIn(diagram, box)));
-  }
 
   const before = canvas.querySelector("g.diagram");
   if (before) {
@@ -94,16 +126,74 @@ export function renderDiagram(canvas: SVGSVGElement, diagram: Diagram): void {
 }
 
 /**
+ * Draw `diagram` as a document of its own, framed by what is drawn in it.
+ *
+ * The same marks the screen gets, in a document that is the drawing rather than
+ * a window onto it: nothing here reads a layout, so a diagram comes out the same
+ * file whatever size the window was — or whether there was a window at all. That
+ * is what lets a batch caller emit one.
+ *
+ * The frame is stated in SVG's axis while the marks stay in the diagram's, the
+ * root carrying the one {@link FLIP} between them.
+ */
+export function drawDocument(diagram: Diagram): SVGSVGElement {
+  const { root, extents } = drawDiagram(diagram);
+  const frame = frameOf(extents);
+  const left = frame.x - frame.w / 2;
+  // The diagram's top edge, which the flip turns into the document's least y.
+  const top = -(frame.y + frame.h / 2);
+
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("width", String(frame.w));
+  svg.setAttribute("height", String(frame.h));
+  svg.setAttribute(
+    "viewBox",
+    `${String(left)} ${String(top)} ${String(frame.w)} ${String(frame.h)}`,
+  );
+  svg.append(root);
+  return svg;
+}
+
+/**
+ * What an exported file is framed to: the smallest extent holding every mark,
+ * an {@link EXPORT_MARGIN} of air around it, and each edge then taken out to a
+ * whole unit.
+ *
+ * Outward, so rounding only ever adds air and can never crop a mark. It is
+ * worth doing because a frame is arithmetic on measured glyph metrics, and the
+ * exact answer serializes as `10.79359999999997` — seventeen digits of float
+ * noise in a file a person may open, standing for a fifth of a unit no renderer
+ * can draw the difference of.
+ *
+ * A diagram with nothing in it has nothing to frame and comes out as that
+ * margin alone about the origin — a small blank square, where the honest union
+ * of nothing would be a document of no size, which no renderer can draw.
+ */
+function frameOf(extents: readonly Extent[]): Extent {
+  const drawn = extents.length === 0 ? [{ x: 0, y: 0, w: 0, h: 0 }] : extents;
+  const left = Math.floor(Math.min(...drawn.map((one) => one.x - one.w / 2)) - EXPORT_MARGIN);
+  const right = Math.ceil(Math.max(...drawn.map((one) => one.x + one.w / 2)) + EXPORT_MARGIN);
+  const bottom = Math.floor(Math.min(...drawn.map((one) => one.y - one.h / 2)) - EXPORT_MARGIN);
+  const top = Math.ceil(Math.max(...drawn.map((one) => one.y + one.h / 2)) + EXPORT_MARGIN);
+  return { x: (left + right) / 2, y: (bottom + top) / 2, w: right - left, h: top - bottom };
+}
+
+/**
  * A box: its walls, its label in the slot the box names, and the term-dots it
  * holds — one group per box, so the drawing is grouped the way the diagram is.
  *
  * Everything in it is drawn in the diagram's own coordinates, the group carrying
  * no transform of its own: that a dot's place is relative to its box is the
  * model's rule, and it is undone in the model, by `placeOf`.
+ *
+ * Every mark made adds its own extent to `extents`, walls included: a wall is
+ * stroked astride the rectangle, so the box reaches half a {@link BOX_STROKE}
+ * beyond the extent the model gave it.
  */
-function drawBox(box: Box, dots: readonly Dot[]): SVGGElement {
+function drawBox(box: Box, dots: readonly Dot[], extents: Extent[]): SVGGElement {
   const group = document.createElementNS(SVG_NS, "g");
   group.classList.add("box");
+  extents.push({ x: box.x, y: box.y, w: box.w + BOX_STROKE, h: box.h + BOX_STROKE });
 
   const walls = document.createElementNS(SVG_NS, "rect");
   walls.setAttribute("x", String(box.x - box.w / 2));
@@ -117,14 +207,14 @@ function drawBox(box: Box, dots: readonly Dot[]): SVGGElement {
   walls.setAttribute("stroke-width", String(BOX_STROKE));
   group.append(walls);
 
-  const boxLabel = drawLabel(box.source, boxLabelOrigin(box), "box-label", BOX_INK);
+  const boxLabel = drawLabel(box.source, boxLabelOrigin(box), "box-label", BOX_INK, extents);
   if (boxLabel) {
     group.append(boxLabel);
   }
   for (const dot of dots) {
     const at = placeOf(box, dot);
-    group.append(drawDot(at));
-    const dotLabel = drawDotLabel(dot, at);
+    group.append(drawDot(at, extents));
+    const dotLabel = drawDotLabel(dot, at, extents);
     if (dotLabel) {
       group.append(dotLabel);
     }
@@ -133,7 +223,8 @@ function drawBox(box: Box, dots: readonly Dot[]): SVGGElement {
 }
 
 /** A term-dot: the `<circle>` standing for a term, where the model puts it. */
-function drawDot(at: Point): SVGCircleElement {
+function drawDot(at: Point, extents: Extent[]): SVGCircleElement {
+  extents.push({ ...at, w: 2 * DOT_RADIUS, h: 2 * DOT_RADIUS });
   const mark = document.createElementNS(SVG_NS, "circle");
   mark.classList.add("term-dot");
   mark.setAttribute("cx", String(at.x));
@@ -148,11 +239,11 @@ function drawDot(at: Point): SVGCircleElement {
  * carries its source and its side together or not at all, which is what makes
  * "unnamed" one state rather than two.
  */
-function drawDotLabel(dot: Dot, at: Point): SVGGElement | undefined {
+function drawDotLabel(dot: Dot, at: Point, extents: Extent[]): SVGGElement | undefined {
   const { source, labelSide } = dot;
   return source === undefined || labelSide === undefined
     ? undefined
-    : drawLabel(source, dotLabelOrigin(at, labelSide), "dot-label", INK);
+    : drawLabel(source, dotLabelOrigin(at, labelSide), "dot-label", INK, extents);
 }
 
 /**
@@ -173,6 +264,7 @@ function drawLabel(
   origin: (run: GlyphRun) => Point,
   className: string,
   ink: string,
+  extents: Extent[],
 ): SVGGElement | undefined {
   const run = runs.get(source);
   if (run === undefined || run instanceof Error) {
@@ -187,6 +279,19 @@ function drawLabel(
   label.append(run.glyphs.cloneNode(true));
 
   const at = origin(run);
+  // The run stands on its left baseline point, so its extent is that point
+  // offset by the metrics the engine measured. They are the typesetter's own
+  // account of the room it takes rather than a bound on its outlines, which
+  // nothing can read off path geometry without a page to measure on — the same
+  // account the run was *placed* by, so the frame and the placement agree, and
+  // the margin covers what a flourish may put beyond it.
+  extents.push({
+    x: at.x + toUnits(run.width) / 2,
+    y: at.y + toUnits(run.ascent - run.depth) / 2,
+    w: toUnits(run.width),
+    h: toUnits(run.ascent + run.depth),
+  });
+
   const scale = LABEL_EM / UNITS_PER_EM;
   // Flipped back: glyph geometry expects the y-down frame it was made in, so
   // inside a y-up diagram it is turned the right way up again here.

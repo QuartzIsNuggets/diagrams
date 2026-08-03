@@ -2,23 +2,23 @@
 //
 // SPDX-License-Identifier: MIT
 
-// Serializing the canvas to a standalone file. The tests below export real
-// content — a diagram drawn by the render backend, a label typeset through the
-// real MathJax pipeline — because an export is only worth anything if what is
-// on screen survives the trip.
+// Emitting a diagram as a file. Nothing here draws on a canvas or lays anything
+// out: an export is a drawing of the model, so a diagram and a real MathJax
+// pipeline are all it takes to make one — which is itself half of what is being
+// claimed. The other half is that what the model holds survives the trip.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createCanvas, SVG_NS } from "./canvas";
+import { SVG_NS } from "./canvas";
 import type { Diagram, Point } from "./diagram";
 import { addBox, addDot, EMPTY_DIAGRAM, labelDot } from "./diagram";
-import { createExportControls, serializeCanvas } from "./export-svg";
-import { renderDiagram, setLabelsOf } from "./render-svg";
+import { createExportControls, serializeDiagram } from "./export-svg";
+import { setLabelsOf } from "./render-svg";
 import type { OutgoingFile } from "./writer";
 import { writeFile } from "./writer";
 
 // The one collaborator stood in for, against the real everything else above:
-// what Export promises ends at the writer's door — the serialized canvas, under
+// what Export promises ends at the writer's door — the serialized diagram, under
 // a name and a type — and where the bytes go from there is `writer.test.ts`'s.
 vi.mock("./writer", () => ({
   writeFile: vi.fn(() => Promise.resolve({ outcome: "handed-off" })),
@@ -29,22 +29,13 @@ const LATEX = "\\Sigma_{(x:A)} P(x)";
 /** What the filesystem says when it will not take the file. */
 const REFUSAL = "Permission denied (os error 13)";
 
-const CANVAS_WIDTH = 800;
-const CANVAS_HEIGHT = 600;
+/** The box every diagram below is built on: a wide one, well off the origin. */
+const BOX = { source: "A", x: 200, y: -120, w: 400, h: 300 };
 
-let canvas: SVGSVGElement;
+/** The diagram the affordance will be asked for — the editor's `current`. */
+let current: Diagram;
 let controls: HTMLDivElement;
 let button: HTMLButtonElement;
-
-/**
- * Give the canvas a rendered size.
- *
- * jsdom has no layout, so every box is 0×0 and the exported `viewBox` would be
- * asserted against nothing.
- */
-function sizeCanvas(width: number, height: number): void {
-  canvas.getBoundingClientRect = (): DOMRect => new DOMRect(0, 0, width, height);
-}
 
 /** A box holding a dot at each of `places`, none of them named. */
 function boxOfDots(...places: readonly Point[]): Diagram {
@@ -56,37 +47,27 @@ function boxOfDots(...places: readonly Point[]): Diagram {
       }
       throw new Error(`the diagram refused a dot at (${String(at.x)}, ${String(at.y)}): ${next}`);
     },
-    addBox(EMPTY_DIAGRAM, { source: "A", x: 200, y: -120, w: 400, h: 300 }),
+    addBox(EMPTY_DIAGRAM, BOX),
   );
 }
 
 /**
- * Draw a box holding a dot at each of `places`.
+ * A box holding a named dot, its label typeset through the real pipeline.
  *
- * Marks reach the canvas the one way any mark does — the backend drawing a
- * diagram that holds them — so what the export is asked to carry is what the
- * screen genuinely has on it.
+ * Setting the sources is what a label costs: the backend draws from runs it has
+ * already set, so a diagram whose labels have never been set exports the marks
+ * and none of their names.
  */
-function drawDotsAt(...places: readonly Point[]): void {
-  renderDiagram(canvas, boxOfDots(...places));
-}
-
-/**
- * Draw a named dot, its label typeset through the real pipeline.
- *
- * The one way a typeset label reaches the canvas: a diagram that holds a source
- * and a backend that has set it.
- */
-async function drawLabelled(latex: string, ...places: readonly Point[]): Promise<void> {
+async function withLabel(latex: string, ...places: readonly Point[]): Promise<Diagram> {
   const placed = boxOfDots({ x: 120, y: -45 }, ...places);
   const dot = placed.dots[0]?.id;
   if (!dot) {
-    throw new Error("the diagram was drawn with no dot to name");
+    throw new Error("the diagram was built with no dot to name");
   }
   const diagram = labelDot(placed, dot, latex);
 
   expect(await setLabelsOf(diagram)).toEqual([]);
-  renderDiagram(canvas, diagram);
+  return diagram;
 }
 
 /** Press Export and read back the file the writer was handed. */
@@ -114,10 +95,18 @@ async function refuseOnce(): Promise<void> {
 }
 
 /** The exported document, reparsed from its own bytes the way a viewer would. */
-function reopenExport(): SVGSVGElement {
-  const parsed = new DOMParser().parseFromString(serializeCanvas(canvas), "image/svg+xml");
+function reopen(diagram: Diagram): SVGSVGElement {
+  const parsed = new DOMParser().parseFromString(serializeDiagram(diagram), "image/svg+xml");
   expect(parsed.querySelector("parsererror")).toBeNull();
   return parsed.documentElement as unknown as SVGSVGElement;
+}
+
+/** The frame a document's `viewBox` states, named rather than positional. */
+function viewBoxOf(file: SVGSVGElement): { x: number; y: number; width: number; height: number } {
+  const [x = 0, y = 0, width = 0, height = 0] = (file.getAttribute("viewBox") ?? "")
+    .split(" ")
+    .map(Number);
+  return { x, y, width, height };
 }
 
 function pathDataOf(root: ParentNode): (string | null)[] {
@@ -125,11 +114,10 @@ function pathDataOf(root: ParentNode): (string | null)[] {
 }
 
 beforeEach(() => {
-  canvas = createCanvas();
-  controls = createExportControls(canvas);
+  current = EMPTY_DIAGRAM;
+  controls = createExportControls(() => current);
   button = controls.querySelector("button")!;
-  document.body.replaceChildren(canvas, controls);
-  sizeCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+  document.body.replaceChildren(controls);
 
   vi.mocked(writeFile).mockClear();
 });
@@ -176,10 +164,11 @@ describe("pressing Export", () => {
     expect(exportOnce().mediaType).toMatch(/^image\/svg\+xml\b/u);
   });
 
-  it("hands over the serialized canvas itself", () => {
-    drawDotsAt({ x: 120, y: -45 });
+  it("emits the diagram as it stands when the button is pressed, not the one it was built with", () => {
+    current = boxOfDots({ x: 120, y: -45 });
 
-    expect(exportOnce().contents).toBe(serializeCanvas(canvas));
+    expect(exportOnce().contents).toBe(serializeDiagram(current));
+    expect(exportOnce().contents).toContain("<circle");
   });
 });
 
@@ -224,52 +213,116 @@ describe("a refusal already on screen", () => {
 
 describe("the serialized document", () => {
   it("reopens on its own as an SVG document", () => {
-    expect(reopenExport().namespaceURI).toBe(SVG_NS);
+    expect(reopen(boxOfDots()).namespaceURI).toBe(SVG_NS);
   });
 
   it("opens with an XML declaration, so its encoding is never guessed at", () => {
-    expect(serializeCanvas(canvas)).toMatch(/^<\?xml version="1\.0" encoding="UTF-8"\?>/u);
+    expect(serializeDiagram(boxOfDots())).toMatch(/^<\?xml version="1\.0" encoding="UTF-8"\?>/u);
   });
 
   it("declares the SVG namespace, so nothing has to be told what it is", () => {
-    expect(serializeCanvas(canvas)).toContain(`xmlns="${SVG_NS}"`);
+    expect(serializeDiagram(boxOfDots())).toContain(`xmlns="${SVG_NS}"`);
   });
 
-  it("carries its own width, height and viewBox — the live canvas has none", () => {
-    expect(canvas.getAttribute("viewBox")).toBeNull();
+  it("is made with no page to lay it out — no canvas, and nothing in the document", () => {
+    // Nothing above has drawn on a canvas or attached anything anywhere: the
+    // body holds the affordance and no drawing at all. That this passes under
+    // jsdom, which lays nothing out, is the claim — a batch caller has no more
+    // of a page than this.
+    expect(document.querySelector("svg")).toBeNull();
 
-    const exported = reopenExport();
-    expect(exported.getAttribute("width")).toBe(String(CANVAS_WIDTH));
-    expect(exported.getAttribute("height")).toBe(String(CANVAS_HEIGHT));
-    expect(exported.getAttribute("viewBox")).toBe(
-      `0 0 ${String(CANVAS_WIDTH)} ${String(CANVAS_HEIGHT)}`,
-    );
+    expect(serializeDiagram(boxOfDots({ x: 120, y: -45 }))).toContain("<circle");
+  });
+});
+
+describe("the frame the file is drawn in", () => {
+  it("comes from the diagram's own extent, with room around it", () => {
+    const { x, y, width, height } = viewBoxOf(reopen(boxOfDots()));
+
+    // The box is 400×300 about (200, −120), y up. The frame holds it with the
+    // same margin on every side, so it is bigger by twice that on each axis and
+    // still centred on the box.
+    const margin = (width - BOX.w) / 2;
+    expect(margin).toBeGreaterThan(0);
+    expect(height - BOX.h).toBeCloseTo(2 * margin);
+    expect(x + width / 2).toBeCloseTo(BOX.x);
+    // The document's y runs down where the diagram's runs up, so the frame's
+    // centre in the file is the box's centre negated.
+    expect(y + height / 2).toBeCloseTo(-BOX.y);
   });
 
-  it("frames the diagram exactly as the screen does, so nothing shifts or crops", () => {
-    sizeCanvas(1024, 300);
+  it("states a width and a height that agree with it, so nothing scales", () => {
+    const file = reopen(boxOfDots());
+    const { width, height } = viewBoxOf(file);
 
-    const exported = reopenExport();
-    expect(exported.getAttribute("width")).toBe("1024");
-    expect(exported.getAttribute("viewBox")).toBe("0 0 1024 300");
+    expect(file.getAttribute("width")).toBe(String(width));
+    expect(file.getAttribute("height")).toBe(String(height));
   });
 
-  it("leaves the live canvas as it was", () => {
-    serializeCanvas(canvas);
+  it("is the same file whatever the window is, there being no window in it", () => {
+    // The old export took its frame from a rendered canvas, so this is the
+    // regression the whole change is about: two exports of one diagram, and
+    // nothing between them that a resize could have changed.
+    const diagram = boxOfDots({ x: 120, y: -45 });
 
-    expect(canvas.getAttribute("viewBox")).toBeNull();
-    expect(canvas.getAttribute("width")).toBeNull();
+    expect(serializeDiagram(diagram)).toBe(serializeDiagram(diagram));
+  });
+
+  it("moves with the diagram rather than framing a fixed corner", () => {
+    const near = addBox(EMPTY_DIAGRAM, { source: "A", x: 60, y: -60, w: 40, h: 40 });
+    const far = addBox(EMPTY_DIAGRAM, { source: "A", x: 900, y: -700, w: 40, h: 40 });
+
+    const nearFrame = viewBoxOf(reopen(near));
+    const farFrame = viewBoxOf(reopen(far));
+
+    // The same box, so the same size of file — sitting somewhere else in the
+    // plane, which only the origin has moved for.
+    expect([farFrame.width, farFrame.height]).toEqual([nearFrame.width, nearFrame.height]);
+    expect(farFrame.x - nearFrame.x).toBeCloseTo(840);
+    expect(farFrame.y - nearFrame.y).toBeCloseTo(640);
+  });
+});
+
+// The frame is what the backend drew rather than what the model holds, which
+// these two are what it costs and what it buys.
+describe("what the frame has to hold", () => {
+  it("a label reaching outside the box it names, which is not cropped off", async () => {
+    // A dot's label stands off the dot, so a dot near a wall puts glyphs past
+    // it — room only the backend that set the run knows to leave.
+    const diagram = await withLabel(LATEX);
+    const { x, width } = viewBoxOf(reopen(diagram));
+
+    const glyphs = [...reopen(diagram).querySelectorAll("path")];
+    expect(glyphs.length).toBeGreaterThan(0);
+    expect(x).toBeLessThan(BOX.x - BOX.w / 2);
+    expect(x + width).toBeGreaterThan(BOX.x + BOX.w / 2);
+  });
+
+  it("everything an exact frame did, each edge having been rounded outward", async () => {
+    // Glyph metrics are fractional, so the union of them is too, and it
+    // serializes as float noise. Rounding is what spares a reader that; going
+    // *outward* is what keeps it from costing a mark.
+    const { x, y, width, height } = viewBoxOf(reopen(await withLabel(LATEX)));
+
+    expect([x, y, width, height].filter((one) => !Number.isInteger(one))).toEqual([]);
+  });
+
+  it("a diagram with nothing in it, framed as a blank square rather than no size", () => {
+    const { width, height } = viewBoxOf(reopen(EMPTY_DIAGRAM));
+
+    expect(width).toBeGreaterThan(0);
+    expect(height).toBe(width);
   });
 });
 
 describe("what the exported file draws", () => {
-  it("carries every dot on screen, with the geometry and ink it was drawn in", () => {
-    drawDotsAt({ x: 120, y: -45 }, { x: 300, y: -200 });
+  it("carries every dot in the diagram, with the geometry and ink it is drawn in", () => {
+    const file = reopen(boxOfDots({ x: 120, y: -45 }, { x: 300, y: -200 }));
 
-    const dots = [...reopenExport().querySelectorAll("circle")];
+    const dots = [...file.querySelectorAll("circle")];
     expect(dots).toHaveLength(2);
     // The diagram's own coordinates, y up, under the one flip at the drawing's
-    // root — which travels with the file, so the export is 1:1 with the screen.
+    // root — which travels with the file, the frame being stated the other way.
     expect(dots.map((dot) => [dot.getAttribute("cx"), dot.getAttribute("cy")])).toEqual([
       ["120", "-45"],
       ["300", "-200"],
@@ -278,49 +331,48 @@ describe("what the exported file draws", () => {
     expect(dots[0]?.getAttribute("fill")).toBeTruthy();
   });
 
-  it("carries the typeset label as the same glyph paths that are on screen", async () => {
-    await drawLabelled(LATEX);
+  it("carries the box itself — walls and type expression, not only what is inside it", async () => {
+    const file = reopen(await withLabel("A"));
 
-    const onScreen = pathDataOf(canvas);
-    expect(onScreen.length).toBeGreaterThan(0);
-    expect(pathDataOf(reopenExport())).toEqual(onScreen);
+    expect(file.querySelectorAll("g.box > rect")).toHaveLength(1);
+    expect(file.querySelector("g.box-label")).not.toBeNull();
   });
 
-  it("keeps the label's placement and colour, which page CSS would not travel with", async () => {
-    await drawLabelled(LATEX);
+  it("carries a typeset label as glyph paths, placed and coloured", async () => {
+    const file = reopen(await withLabel(LATEX));
 
-    const label = reopenExport().querySelector("g.dot-label");
-    expect(label?.getAttribute("transform")).toBe(
-      canvas.querySelector("g.dot-label")?.getAttribute("transform"),
-    );
+    const label = file.querySelector("g.dot-label");
+    expect(pathDataOf(label!).length).toBeGreaterThan(0);
+    expect(label?.getAttribute("transform")).toMatch(/^translate\(/u);
     expect(label?.getAttribute("color")).toBeTruthy();
   });
 
-  it("draws dots and label together — the whole canvas, not one kind of mark", async () => {
-    await drawLabelled(LATEX, { x: 300, y: -200 });
+  it("draws dots and label together — the whole diagram, not one kind of mark", async () => {
+    const file = reopen(await withLabel(LATEX, { x: 300, y: -200 }));
 
-    const exported = reopenExport();
-    expect(exported.querySelectorAll("circle")).toHaveLength(2);
-    expect(exported.querySelectorAll("g.dot-label")).toHaveLength(1);
+    expect(file.querySelectorAll("circle")).toHaveLength(2);
+    expect(file.querySelectorAll("g.dot-label")).toHaveLength(1);
+  });
+
+  it("carries no pointer rule, which is the screen's business and not the file's", () => {
+    expect(reopen(boxOfDots()).querySelector("[pointer-events]")).toBeNull();
   });
 });
 
 describe("what the exported file needs from outside", () => {
   it("resolves every glyph inside the file — no <use> into a font cache left behind", async () => {
-    await drawLabelled(LATEX);
+    const file = reopen(await withLabel(LATEX));
 
-    const exported = reopenExport();
-    expect(exported.querySelectorAll("use")).toHaveLength(0);
-    expect(exported.querySelectorAll("path").length).toBeGreaterThan(0);
-    expect(pathDataOf(exported).filter((d) => !d)).toEqual([]);
+    expect(file.querySelectorAll("use")).toHaveLength(0);
+    expect(file.querySelectorAll("path").length).toBeGreaterThan(0);
+    expect(pathDataOf(file).filter((d) => !d)).toEqual([]);
   });
 
   it("holds no element that reaches for something else", async () => {
-    await drawLabelled(LATEX);
+    const file = reopen(await withLabel(LATEX));
 
-    const exported = reopenExport();
-    expect(exported.querySelectorAll("use, image, foreignObject, script, style")).toHaveLength(0);
-    const references = [...exported.querySelectorAll("*")]
+    expect(file.querySelectorAll("use, image, foreignObject, script, style")).toHaveLength(0);
+    const references = [...file.querySelectorAll("*")]
       .flatMap((element) => [...element.attributes])
       .filter(({ name, value }) => name.endsWith("href") || value.includes("url("))
       .map(({ name, value }) => `${name}=${value}`);
@@ -328,15 +380,14 @@ describe("what the exported file needs from outside", () => {
   });
 
   it("names no location but the SVG namespace itself", async () => {
-    await drawLabelled(LATEX);
+    const locations = new Set(
+      serializeDiagram(await withLabel(LATEX)).match(/https?:\/\/[^"'\s>]+/gu),
+    );
 
-    const locations = new Set(serializeCanvas(canvas).match(/https?:\/\/[^"'\s>]+/gu));
     expect([...locations]).toEqual([SVG_NS]);
   });
 
   it("carries no text needing a font the reader may not have", async () => {
-    await drawLabelled(LATEX);
-
-    expect(reopenExport().querySelectorAll("text")).toHaveLength(0);
+    expect(reopen(await withLabel(LATEX)).querySelectorAll("text")).toHaveLength(0);
   });
 });
