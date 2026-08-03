@@ -37,6 +37,15 @@ let current: Diagram;
 let controls: HTMLDivElement;
 let button: HTMLButtonElement;
 
+/**
+ * The naming bar, stood in for by the one thing the affordance is told of it.
+ *
+ * A boolean is the whole of what crosses this seam, so raising and taking away a
+ * bar is calling this — which is also the claim: nothing here reads a form on the
+ * page, and how a naming actually opens and closes is `naming-bar.test.ts`'s.
+ */
+let nowAsking: (asking: boolean) => void;
+
 /** A box holding a dot at each of `places`, none of them named. */
 function boxOfDots(...places: readonly Point[]): Diagram {
   return places.reduce<Diagram>(
@@ -115,7 +124,15 @@ function pathDataOf(root: ParentNode): (string | null)[] {
 
 beforeEach(() => {
   current = EMPTY_DIAGRAM;
-  controls = createExportControls(() => current);
+  controls = createExportControls(
+    () => current,
+    (watch) => {
+      nowAsking = watch;
+      // Told at once, the way the bar tells it: the page opens with nothing being
+      // named, and the control has to learn that rather than assume it.
+      watch(false);
+    },
+  );
   button = controls.querySelector("button")!;
   document.body.replaceChildren(controls);
 
@@ -169,6 +186,49 @@ describe("pressing Export", () => {
 
     expect(exportOnce().contents).toBe(serializeDiagram(current));
     expect(exportOnce().contents).toContain("<circle");
+  });
+});
+
+// No diagram leaves the editor half-made: a naming that is still open is a
+// term-dot placed but not named, or a box not made at all until its source sets,
+// so the file would be quietly not the drawing on screen.
+describe("Export while a naming is open", () => {
+  it("is live to begin with, nothing being named on a page that just opened", () => {
+    expect(button.disabled).toBe(false);
+  });
+
+  it("goes inert, and says so before a press is made rather than swallowing one", () => {
+    nowAsking(true);
+
+    // `disabled` is both halves at once — it stops the press and the keystroke,
+    // and it is what the stylesheet dims. jsdom applies none, so where that lands
+    // is `style.css`'s to answer.
+    expect(button.disabled).toBe(true);
+    button.click();
+    expect(writeFile).not.toHaveBeenCalled();
+  });
+
+  it("is live again as soon as the bar closes, and exports the diagram it left", () => {
+    nowAsking(true);
+    current = boxOfDots({ x: 120, y: -45 });
+
+    nowAsking(false);
+
+    expect(button.disabled).toBe(false);
+    // However that naming closed — a source that set, a give-up, a press that
+    // cancelled it — is the bar's own business and reaches here as this one
+    // `false`; `naming-bar.test.ts` is where each road is walked.
+    expect(exportOnce().contents).toBe(serializeDiagram(current));
+  });
+
+  it("leaves the refusal region alone: it stops an export, and reports none", async () => {
+    await refuseOnce();
+
+    nowAsking(true);
+
+    // A write the filesystem refused is still the last attempt. Going inert is
+    // not an attempt at all, so it has nothing to say here and says nothing.
+    expect(reported()).toBe(`The export could not be written: ${REFUSAL}`);
   });
 });
 

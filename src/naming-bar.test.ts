@@ -11,7 +11,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Source } from "./diagram";
-import { askForSource, pressElsewhere } from "./naming-bar";
+import { askForSource, pressElsewhere, whileNaming } from "./naming-bar";
 import type { PagePoint } from "./render-svg";
 
 const LATEX = "\\Sigma_{(x:A)} P(x)";
@@ -120,6 +120,19 @@ function submit(latex: string): void {
 
 function press(key: string): void {
   bar().dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+}
+
+/**
+ * Start watching, and read back everything the bar has said since — the first
+ * entry being what it said on being asked.
+ *
+ * A log rather than a latest value: how often the bar speaks is as much of the
+ * claim as what it says.
+ */
+function watched(): boolean[] {
+  const said: boolean[] = [];
+  whileNaming((asking) => said.push(asking));
+  return said;
 }
 
 /**
@@ -549,5 +562,102 @@ describe("a second question asked while one is open", () => {
     void ask(AT, takes);
 
     await expect(first).resolves.toBeUndefined();
+  });
+
+  it("closes the naming and opens another, in that order and not as one", async () => {
+    const first = ask(AT, takes);
+    const said = watched();
+
+    void ask({ left: 500, top: 400 }, takes);
+    await first;
+
+    // The gap between the two is real — the first bar goes before the second is
+    // raised — and it is a synchronous one no press or paint fits inside.
+    expect(said).toEqual([true, false, true]);
+  });
+});
+
+// Whether a naming is open is the one thing the bar says about itself to
+// something that is not a gesture — the export control, which may not emit a
+// drawing that is missing the mark being named. What it does about being told is
+// `export-svg.test.ts`'s; that it is told is here.
+describe("what the bar tells a watcher on being asked", () => {
+  it("says none is open where none is, so nothing has to assume it", async () => {
+    // The quiet page, made rather than relied on: another test's bar may still
+    // be up when this one starts.
+    const asked = ask(AT, takes);
+    press("Escape");
+    await asked;
+
+    expect(watched()).toEqual([false]);
+  });
+
+  it("says one is where one is, a watcher being free to arrive mid-question", () => {
+    void ask(AT, takes);
+
+    expect(watched()).toEqual([true]);
+  });
+});
+
+describe("what the bar says as a question opens and closes", () => {
+  it("says one is open the moment a bar is raised", () => {
+    const said = watched();
+
+    void ask(AT, takes);
+
+    expect(said.at(-1)).toBe(true);
+  });
+
+  it("says none is again once the source is taken", async () => {
+    const asked = ask(AT, takes);
+    const said = watched();
+
+    submit(LATEX);
+    await asked;
+
+    expect(said).toEqual([true, false]);
+  });
+
+  it("says none is again when the question is given up on", async () => {
+    const asked = ask(AT, takes);
+    const said = watched();
+
+    press("Escape");
+    await asked;
+
+    expect(said).toEqual([true, false]);
+  });
+
+  it("says none is again when a press elsewhere cancelled it", async () => {
+    const asked = ask(AT, takes);
+    const said = watched();
+
+    pressElsewhere();
+    await asked;
+
+    expect(said).toEqual([true, false]);
+  });
+});
+
+// Said once each way and no more: a control told a question is open while it is
+// already standing down is one somebody makes idempotent rather than leaves be.
+describe("what closes no question, the bar says nothing new about", () => {
+  it("a source the vetting refused, the bar staying at its mark", async () => {
+    void ask(AT, refusing(1));
+    const said = watched();
+
+    submit(LATEX);
+    await settled();
+
+    expect(said).toEqual([true]);
+  });
+
+  it("a press it refused, the question standing with its source in it", () => {
+    void askForSource(AT, "required", takes);
+    const said = watched();
+
+    pressElsewhere();
+
+    expect(said).toEqual([true]);
   });
 });

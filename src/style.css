@@ -178,6 +178,13 @@ body {
   background: #f4f4f4;
 }
 
+/* Inert for as long as a naming bar is asking. Dimmed rather than hidden: the
+   corner is the export's whether or not it may be pressed, and a control that
+   vanished would read as one that was never there. */
+.export-button:disabled {
+  opacity: 0.45;
+}
+
 /* Empty until something is refused — a gesture, a source, a write — so they take
    no room the rest of the time. The bar's has to say so outright: an empty flex
    item still claims the gap below it, which would hold the input that far clear

@@ -31,6 +31,47 @@ interface Question {
 
 let open: Question | undefined;
 
+/** Whoever stands down while a naming is open, told each time that changes. */
+const watchers: ((asking: boolean) => void)[] = [];
+
+/**
+ * Open `question`, or none at all, and tell whoever stands down for one.
+ *
+ * The one place `open` is set. Whether a naming is open is a fact another module
+ * acts on now, so an assignment that slipped past this would leave that module
+ * holding the fact from before.
+ */
+function nowAsking(question?: Question): void {
+  open = question;
+  for (const watch of watchers) {
+    watch(question !== undefined);
+  }
+}
+
+/**
+ * Be told whether a naming is open — now, and whenever that changes.
+ *
+ * The one thing the bar says about itself to anything that is not a gesture, and
+ * it is said because the diagram behind an open question is missing the mark
+ * being named: a dot placed but not yet named, a box not made at all until its
+ * source sets. So what acts on the whole diagram has to stand down until the bar
+ * goes. The export control is that thing, and so far the only one.
+ *
+ * Pushed rather than left to be asked, because standing down has to be *visible*
+ * — a control that only refused once pressed would explain itself a press too
+ * late. Told at once on registering, so nothing has to assume a state and then
+ * be corrected out of it.
+ *
+ * There is no way back out, and nothing needs one: what stands down is chrome
+ * built once with the page and never taken away, so a registration lasts exactly
+ * as long as the thing that made it. Give this an unregister the day something
+ * that comes and goes has to stand down too.
+ */
+export function whileNaming(watch: (asking: boolean) => void): void {
+  watchers.push(watch);
+  watch(open !== undefined);
+}
+
 /**
  * Ask for a source at a point on the page: a bar appears there, and stays until
  * `vet` takes a source or the question is given up on.
@@ -78,7 +119,7 @@ export async function askForSource<Vetted>(
       if (open?.form !== form) {
         return;
       }
-      open = undefined;
+      nowAsking();
       form.remove();
       resolve(vetted);
     };
@@ -95,7 +136,7 @@ export async function askForSource<Vetted>(
       }
     };
 
-    open = { form, naming, answer };
+    nowAsking({ form, naming, answer });
     enableAnswering(form, input);
   });
 }

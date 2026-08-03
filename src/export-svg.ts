@@ -52,12 +52,21 @@ export function serializeDiagram(diagram: Diagram): string {
  * handed one: a diagram is a value, so the one held when this was built is the
  * one the editor has since moved on from.
  *
+ * `whileNaming` is the one thing it is told about the editing going on behind
+ * it, and it is required: no diagram leaves the editor half-made, so a caller
+ * who could omit it would get a control that exports one. It is handed in rather
+ * than reached for, so the coupling is a wire in the page's own wiring and this
+ * module still knows nothing of bars.
+ *
  * It comes back already listening rather than as an inert element a caller has
  * to remember to enable: the button exists for this one action, so there is no
  * useful moment between the two and nothing for a caller to get in the wrong
  * order. Where it goes on the page is still theirs to decide.
  */
-export function createExportControls(diagramNow: () => Diagram): HTMLDivElement {
+export function createExportControls(
+  diagramNow: () => Diagram,
+  whileNaming: (watch: (asking: boolean) => void) => void,
+): HTMLDivElement {
   const controls = document.createElement("div");
   controls.classList.add("export-controls");
 
@@ -81,6 +90,14 @@ export function createExportControls(diagramNow: () => Diagram): HTMLDivElement 
   // stays under the cursor that just pressed it.
   controls.append(error, button);
   enableExporting(diagramNow, button, error);
+
+  // `disabled` and not a rule of our own: it is the one state that stops a press
+  // *and* a keystroke *and* has a look the stylesheet only has to dim. The
+  // refusal region is left alone — this stops an export from starting, and the
+  // region is where one that failed says so.
+  whileNaming((asking) => {
+    button.disabled = asking;
+  });
   return controls;
 }
 
