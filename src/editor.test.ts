@@ -5,8 +5,8 @@
 // Making a box, end to end: a press on empty canvas, a type expression, and a
 // box on screen because the diagram holds one. The rules the shell goes by are
 // tested where they live — the geometry in diagram.test.ts with no DOM, the
-// gesture in render-svg.test.ts — and what is left here is the wiring between
-// them, which is only true of a real document.
+// gesture in gesture.test.ts with no canvas — and what is left here is the
+// wiring between them, which is only true of a real document.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 

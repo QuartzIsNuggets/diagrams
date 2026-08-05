@@ -13,7 +13,6 @@ import { addBox, addDot, boxAt, EMPTY_DIAGRAM, labelDot } from "./diagram";
 import { askForSource, pressElsewhere } from "./naming-bar";
 import type { Unset } from "./render-svg";
 import {
-  clearChrome,
   enableDragging,
   measureBox,
   renderDiagram,
@@ -94,20 +93,16 @@ function unsetWording(unset: readonly Unset[]): string {
  * refusal is put.
  *
  * The one mutable thing the editor has. `current` is the document — every mark
- * on the canvas is there because it holds one — and `gestures` counts the ones
- * that have begun, which is an identity rather than a tally: a press elsewhere
- * gives up on an optional naming *and* begins a gesture, so the naming it
- * displaced comes back to an editor the next gesture is already drawing into,
- * and the count is how it is told it is no longer the one on the canvas.
+ * on the canvas is there because it holds one.
  *
- * Nothing here says whether a bar is asking. There is one bar and it is the bar
- * that knows, so a second copy of that fact would be one to keep in step.
+ * Nothing here says whether a bar is asking, and nothing here counts gestures:
+ * the bar knows the first, the gesture the presses arrive at knows the second,
+ * and a second copy of either would be one to keep in step.
  */
 interface Shell {
   readonly canvas: SVGSVGElement;
   readonly refusal: HTMLParagraphElement;
   current: Diagram;
-  gestures: number;
 }
 
 /**
@@ -149,23 +144,24 @@ async function settle(shell: Shell): Promise<void> {
  *
  * A naming a press gave up on ends nothing at all. The press that gave up on it
  * began a gesture of its own, which is drawing into the same editor by the time
- * this comes back — so the rectangle to take down, the region to empty and the
- * diagram to hold are all that gesture's now, and a naming that is no longer the
- * one on the canvas would be undoing them.
+ * this comes back — so the region to empty and the diagram to hold are that
+ * gesture's now, and `displaced`, which the gesture that landed this naming was
+ * handed, is how one that is no longer the one on the canvas is told so. The
+ * rectangle is not among them: the gesture that drew it is what takes it down,
+ * when the naming it is the mark for settles — which is this returning.
  */
-async function named(shell: Shell, naming: Promise<Diagram>): Promise<void> {
-  const gesture = shell.gestures;
+async function named(
+  shell: Shell,
+  naming: Promise<Diagram>,
+  displaced: () => boolean,
+): Promise<void> {
   const next = await naming;
-  if (shell.gestures !== gesture) {
+  if (displaced()) {
     return;
   }
   shell.current = next;
   draw(shell);
   shell.refusal.textContent = "";
-  // The gesture is over: any rectangle it drew goes, and the next press is free
-  // to start another. Not before — a rectangle is the mark its question is
-  // about, so it stands as long as the bar is still asking about it.
-  clearChrome(shell.canvas);
 }
 
 /**
@@ -177,7 +173,7 @@ async function named(shell: Shell, naming: Promise<Diagram>): Promise<void> {
  * never made at all. Asking first would cost more than it bought, a release the
  * model refuses then throwing away a source already typed.
  */
-async function nameDot(shell: Shell, at: Point): Promise<void> {
+async function nameDot(shell: Shell, at: Point, displaced: () => boolean): Promise<void> {
   const placed = addDot(shell.current, at);
   if (typeof placed === "string") {
     shell.refusal.textContent = REFUSALS[placed];
@@ -187,7 +183,7 @@ async function nameDot(shell: Shell, at: Point): Promise<void> {
   shell.refusal.textContent = "";
   draw(shell);
 
-  await named(shell, dotNamed(shell, placed.dot, at));
+  await named(shell, dotNamed(shell, placed.dot, at), displaced);
 }
 
 /**
@@ -197,7 +193,8 @@ async function nameDot(shell: Shell, at: Point): Promise<void> {
  * box is a term-dot — and the release decides only where it lands. Only the
  * diagram can say which of the two a press landed on, and it says so from the
  * extents it holds rather than from anything drawn. What the press settled on is
- * kept in `making` until the release places it.
+ * kept in `making` until the release places it, and what the release hands back
+ * is the naming it asks for.
  *
  * A press while a question is open is the bar's to answer rather than this
  * shell's, and what comes back is whether there is a gesture in it: the shell
@@ -206,7 +203,7 @@ async function nameDot(shell: Shell, at: Point): Promise<void> {
  * The shell comes back so what is on screen can be read out of it.
  */
 function enableDrawing(canvas: SVGSVGElement, refusal: HTMLParagraphElement): Shell {
-  const shell: Shell = { canvas, refusal, current: EMPTY_DIAGRAM, gestures: 0 };
+  const shell: Shell = { canvas, refusal, current: EMPTY_DIAGRAM };
   let making: "box" | "dot" = "box";
   draw(shell);
 
@@ -216,15 +213,15 @@ function enableDrawing(canvas: SVGSVGElement, refusal: HTMLParagraphElement): Sh
       if (pressElsewhere() === "refused") {
         return "no-gesture";
       }
-      shell.gestures += 1;
       making = boxAt(shell.current, at) ? "dot" : "box";
       // A dot has no extent to show: a rectangle following the pointer would
       // say a box was coming.
       return making === "box" ? "rectangle" : "nothing";
     },
-    (drag, at) => {
-      void (making === "box" ? named(shell, boxFrom(shell, drag)) : nameDot(shell, at));
-    },
+    (drag, at, displaced) =>
+      making === "box"
+        ? named(shell, boxFrom(shell, drag), displaced)
+        : nameDot(shell, at, displaced),
   );
   return shell;
 }

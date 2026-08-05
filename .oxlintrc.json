@@ -5,10 +5,11 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "categories": { "correctness": "error", "suspicious": "error", "pedantic": "warn" },
-  // Files here carry long comments by design, so the length budget counts what
-  // a file *does* rather than what it explains — the rule fires on a file that
-  // has grown too much to hold, not on one that says why.
+  // Files here carry long comments by design, so the length budgets count what
+  // the code *does* rather than what it explains — a rule fires on a file or a
+  // function that has grown too much to hold, not on one that says why.
   "rules": {
-    "max-lines": ["warn", { "max": 300, "skipComments": true, "skipBlankLines": true }]
+    "max-lines": ["warn", { "max": 300, "skipComments": true, "skipBlankLines": true }],
+    "max-lines-per-function": ["warn", { "max": 50, "skipComments": true, "skipBlankLines": true }]
   }
 }

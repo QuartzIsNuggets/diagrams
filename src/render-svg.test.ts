@@ -14,7 +14,6 @@ import { createCanvas, SVG_NS } from "./canvas";
 import type { Diagram, DotId, DotSide, Extent, Point } from "./diagram";
 import { addBox, addDot, DOT_SEPARATION, EMPTY_DIAGRAM, labelDot } from "./diagram";
 import {
-  clearChrome,
   enableDragging,
   measureBox,
   renderDiagram,
@@ -119,7 +118,12 @@ function draggingLands(): Extent[] {
   enableDragging(
     canvas,
     () => "rectangle",
-    (drag) => landed.push(drag),
+    // Nothing to name, so the naming is over as soon as it is asked for — and
+    // the rectangle comes down a turn after the release rather than standing.
+    (drag) => {
+      landed.push(drag);
+      return Promise.resolve();
+    },
   );
   return landed;
 }
@@ -492,23 +496,27 @@ describe("the rectangle a box is drawn in", () => {
     releaseAt(140, 90);
   });
 
-  it("stands where the gesture left it, until whatever took it up takes it down", () => {
+  it("stands where the gesture left it, and goes when the gesture is done with it", async () => {
     draggingLands();
 
     pressAt(40, 40);
     releaseAt(140, 90);
     expect(cornerOf(canvas.querySelector("g.chrome > rect"))).toEqual(["40", "-90", "100", "50"]);
 
-    clearChrome(canvas);
-
-    expect(canvas.querySelector("g.chrome")).toBeNull();
+    // Nothing to show is what takes it down — when a gesture is done with its
+    // mark is the gesture's own, and is asserted in gesture.test.ts.
+    await vi.waitFor(() => expect(canvas.querySelector("g.chrome")).toBeNull());
   });
 
   it("is never drawn at all for a gesture with nothing to show", () => {
     // Nothing to show is nothing to draw, which is the backend's half of the
     // answer — that such a gesture is shown nothing is the gesture's own, and
     // is asserted in gesture.test.ts.
-    enableDragging(canvas, () => "nothing", vi.fn());
+    enableDragging(
+      canvas,
+      () => "nothing",
+      vi.fn(() => Promise.resolve()),
+    );
 
     pressAt(40, 40);
     moveTo(140, 90);

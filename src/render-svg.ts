@@ -503,14 +503,19 @@ export function toPagePoint(canvas: SVGSVGElement, at: Point): PagePoint {
 }
 
 /**
- * Draw the rectangle a box is being made in, replacing the one before it.
+ * Draw the rectangle a box is being made in, replacing the one before it — or
+ * take back every provisional mark, where there is nothing to show.
  *
  * Chrome, not diagram: it is a mark the gesture makes before it lands, so it is
  * drawn apart from what the diagram holds and never survives the gesture. It
  * takes its coordinates in diagram units all the same, the gesture having
  * nothing else to hand.
  */
-function showProvisionalBox(canvas: SVGSVGElement, extent: Extent): void {
+function showProvisionalBox(canvas: SVGSVGElement, extent: Extent | undefined): void {
+  if (extent === undefined) {
+    canvas.querySelector("g.chrome")?.remove();
+    return;
+  }
   const rect = canvas.querySelector("g.chrome > rect.provisional-box") ?? newProvisionalBox(canvas);
   rect.setAttribute("x", String(extent.x - extent.w / 2));
   rect.setAttribute("y", String(extent.y - extent.h / 2));
@@ -526,31 +531,24 @@ function showProvisionalBox(canvas: SVGSVGElement, extent: Extent): void {
  * rectangle following it looks like. Both stay private — that is the point of
  * composing over {@link enableGesture} rather than exporting the parts.
  *
- * Nothing to show is nothing to draw. A gesture showing no rectangle has never
- * drawn one to take down, and the rectangle a landed one leaves standing is
- * {@link clearChrome}'s to remove when whatever took it up is done with it.
+ * Nothing to show is nothing left standing: a gesture showing no rectangle draws
+ * none, and one that is done with the rectangle it drew has it taken down by the
+ * same call that put it up.
  */
 export function enableDragging(
   canvas: SVGSVGElement,
   starts: (at: Point) => Started,
-  lands: (drag: Extent, at: Point) => void,
+  lands: (drag: Extent, at: Point, displaced: () => boolean) => Promise<void>,
 ): void {
   enableGesture(
     canvas,
     (event) => toDiagramPoint(canvas, event),
     (drag) => {
-      if (drag !== undefined) {
-        showProvisionalBox(canvas, drag);
-      }
+      showProvisionalBox(canvas, drag);
     },
     starts,
     lands,
   );
-}
-
-/** Take back every provisional mark: the gesture has landed, or has not. */
-export function clearChrome(canvas: SVGSVGElement): void {
-  canvas.querySelector("g.chrome")?.remove();
 }
 
 function newProvisionalBox(canvas: SVGSVGElement): SVGRectElement {
