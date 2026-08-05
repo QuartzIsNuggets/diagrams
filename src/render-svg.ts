@@ -136,10 +136,23 @@ export function renderDiagram(canvas: SVGSVGElement, diagram: Diagram): void {
  * file whatever size the window was — or whether there was a window at all. That
  * is what lets a batch caller emit one.
  *
+ * It settles the diagram first, and is asynchronous for that reason alone. This
+ * is where the two drawings part: a document is read once and keeps whatever
+ * gaps it was written with, so a caller that never settled the diagram must not
+ * be able to emit one short a name, where {@link renderDiagram} draws what is
+ * set at once and is drawn again when the rest arrives.
+ *
+ * A source that will not set costs its own label here exactly as it does on
+ * screen, and is not named on the way out: {@link setLabelsOf} is what reports
+ * the sources a diagram brought and this backend would not take, and a document
+ * standing for what is on screen is the honest answer for a caller that did not
+ * ask it.
+ *
  * The frame is stated in SVG's axis while the marks stay in the diagram's, the
  * root carrying the one {@link FLIP} between them.
  */
-export function drawDocument(diagram: Diagram): SVGSVGElement {
+export async function drawDocument(diagram: Diagram): Promise<SVGSVGElement> {
+  await setLabelsOf(diagram);
   const { root, extents } = drawDiagram(diagram);
   const frame = frameOf(extents);
   const left = frame.x - frame.w / 2;

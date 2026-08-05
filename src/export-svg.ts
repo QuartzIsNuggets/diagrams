@@ -29,18 +29,17 @@ const SVG_MEDIA_TYPE = "image/svg+xml;charset=utf-8";
  * stands on its own, with no reference back to this page's stylesheet, fonts,
  * or `<defs>`.
  *
- * Every label is expected already set: drawing is synchronous, so a source the
- * backend has never typeset exports as a mark with no name rather than as a
- * failure — the same thing it looks like on screen. A caller that did not put
- * the diagram there by gesture owes it a `setLabelsOf` first, which is also the
- * one thing that reports a source that will not set at all.
+ * A promise because the document sets its own labels rather than trusting that
+ * somebody upstream did: whatever road the diagram arrived by, what comes out
+ * carries every name it can be given. What becomes of a source that will not
+ * set is the backend's own account, and is the same on screen as in the file.
  */
-export function serializeDiagram(diagram: Diagram): string {
+export async function serializeDiagram(diagram: Diagram): Promise<string> {
   // Not `outerHTML`: that serializes by HTML rules, which leave the SVG
   // namespace to be inferred from the surrounding document — there isn't one
   // here. XMLSerializer declares it on the root, because the element genuinely
   // is in it, and that declaration is what makes the file parseable alone.
-  return `<?xml version="1.0" encoding="UTF-8"?>\n${new XMLSerializer().serializeToString(drawDocument(diagram))}\n`;
+  return `<?xml version="1.0" encoding="UTF-8"?>\n${new XMLSerializer().serializeToString(await drawDocument(diagram))}\n`;
 }
 
 /**
@@ -113,6 +112,11 @@ export function createExportControls(
  *
  * A message stands for the *last* attempt, so every outcome that is not a
  * refusal empties it — including a cancelled dialog, which failed at nothing.
+ *
+ * The bytes are awaited before the writer is reached, the document setting its
+ * own labels. On this road that settling finds every source already set — each
+ * was vetted at the naming bar on its way into the diagram — so it costs
+ * microtasks and no more, which is what `writeFile` says a caller may spend.
  */
 function enableExporting(
   diagramNow: () => Diagram,
@@ -120,11 +124,10 @@ function enableExporting(
   error: HTMLParagraphElement,
 ): void {
   button.addEventListener("click", () => {
-    writeFile({
-      contents: serializeDiagram(diagramNow()),
-      filename: EXPORT_FILENAME,
-      mediaType: SVG_MEDIA_TYPE,
-    })
+    serializeDiagram(diagramNow())
+      .then((contents) =>
+        writeFile({ contents, filename: EXPORT_FILENAME, mediaType: SVG_MEDIA_TYPE }),
+      )
       .then(() => {
         error.textContent = "";
       })

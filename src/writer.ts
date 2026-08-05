@@ -52,9 +52,11 @@ export type WriteResult = Written | HandedOff | Cancelled;
  * passes it through this door rather than around it.
  *
  * A promise from the start, because on the app surface it waits on a dialog the
- * user has to answer. The web arm has nothing to wait for, and is called
- * without awaiting anything first so the download still rides the click that
- * asked for it.
+ * user has to answer. The web arm has nothing of its own to wait for and hands
+ * the bytes over before it yields, which is what keeps the download riding the
+ * click that asked for it. A caller may spend microtasks reaching this door and
+ * still ride it — user activation is bounded by time rather than by tasks — and
+ * what would spend it is a real wait in front of the call.
  */
 export function writeFile(file: OutgoingFile): Promise<WriteResult> {
   if (onTheAppSurface()) {
