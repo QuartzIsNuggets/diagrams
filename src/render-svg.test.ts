@@ -6,7 +6,11 @@
 // needs a document to be true — the conversion, the flip, and the ink. The
 // geometry it draws from is the diagram's own and is tested in diagram.test.ts
 // with no DOM at all; what a press means is the gesture's, and is tested in
-// gesture.test.ts with no canvas.
+// gesture.test.ts with no canvas; and what a source has been set to — when the
+// engine is asked for one, and when the remembered answer is taken instead — is
+// the store's, and is tested in label-store.test.ts against a faked engine. The
+// real engine runs here, so what is claimed of it is only that these
+// compositions reach it.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -21,22 +25,8 @@ import {
   toPagePoint,
   vetSource,
 } from "./render-svg";
-import { typesetLatex } from "./typesetting";
-
-// The real engine, counted rather than replaced: how often a source is set is
-// the backend's own claim, and it is only worth asserting against the thing
-// that actually sets one. `typesetting.test.ts` is untouched by this.
-vi.mock("./typesetting", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./typesetting")>();
-  return { ...actual, typesetLatex: vi.fn(actual.typesetLatex) };
-});
 
 let canvas: SVGSVGElement;
-
-/** How many times the engine has been asked for `source`. */
-function timesSet(source: string): number {
-  return vi.mocked(typesetLatex).mock.calls.filter(([latex]) => latex === source).length;
-}
 
 /**
  * Place the canvas at a viewport offset.
@@ -418,28 +408,6 @@ describe("a source that will not set", () => {
   });
 });
 
-// Once per source, not once per label per frame: a redraw rebuilds every label,
-// and a source that would not set is remembered as such so that it is neither
-// retried nor reported again.
-
-describe("a source already set", () => {
-  it("is not set a second time, whether it came to a run or to a refusal", async () => {
-    const good = "\\alpha";
-    const bad = "\\notacontrolsequence{r}";
-    const diagram = withNamedDot({ x: 0, y: 0, w: 200, h: 200 }, { x: 0, y: 0 }, bad, "left");
-    const both: Diagram = {
-      ...diagram,
-      boxes: diagram.boxes.map((box) => ({ ...box, source: good })),
-    };
-
-    await setLabelsOf(both);
-    await setLabelsOf(both);
-    renderDiagram(canvas, both);
-
-    expect([timesSet(good), timesSet(bad)]).toEqual([1, 1]);
-  });
-});
-
 describe("vetting a source before a gesture puts it in the diagram", () => {
   it("takes one this backend can draw", async () => {
     await expect(vetSource("\\beta")).resolves.toBeUndefined();
@@ -449,17 +417,6 @@ describe("vetting a source before a gesture puts it in the diagram", () => {
     await expect(vetSource("\\notacontrolsequence{n}")).rejects.toThrow(
       /undefined control sequence/iu,
     );
-  });
-
-  it("asks the engine again when the same source is submitted twice", async () => {
-    const bad = "\\notacontrolsequence{m}";
-
-    await expect(vetSource(bad)).rejects.toThrow();
-    await expect(vetSource(bad)).rejects.toThrow();
-
-    // A submit is someone asking, where a redraw asks nothing — so a refusal a
-    // bad moment produced is never frozen onto the source that met it.
-    expect(timesSet(bad)).toBe(2);
   });
 });
 

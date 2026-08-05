@@ -14,12 +14,13 @@
 import { SVG_NS } from "./canvas";
 import type { Box, Diagram, Dot, DotSide, Extent, Point, Source } from "./diagram";
 import { DOT_SEPARATION, dotsIn, placeOf } from "./diagram";
-import { messageOf } from "./failure";
 import type { Started } from "./gesture";
 import { enableGesture } from "./gesture";
+import type { Unset } from "./label-store";
+import { createLabelStore } from "./label-store";
 import { BOX_INK, INK } from "./palette";
 import type { GlyphRun } from "./typesetting";
-import { typesetLatex, UNITS_PER_EM } from "./typesetting";
+import { UNITS_PER_EM } from "./typesetting";
 
 /** Type size of a label on the diagram, in diagram units. */
 const LABEL_EM = 24;
@@ -268,15 +269,15 @@ function drawLabel(
   ink: string,
   extents: Extent[],
 ): SVGGElement | undefined {
-  const run = runs.get(source);
-  if (run === undefined || run instanceof Error) {
+  const run = labels.runOf(source);
+  if (run === undefined) {
     return undefined;
   }
 
   const label = document.createElementNS(SVG_NS, "g");
   label.classList.add(className);
   label.setAttribute("color", ink);
-  // A copy: the cache holds one run however many labels are set from it, and a
+  // A copy: one run is remembered however many labels are drawn from it, and a
   // node can only be in one place.
   label.append(run.glyphs.cloneNode(true));
 
@@ -359,70 +360,40 @@ function dotLabelOrigin(at: Point, side: DotSide): (run: GlyphRun) => Point {
 }
 
 /**
- * What each source has been set to: its glyph run, or the refusal there was
- * instead.
+ * What this backend has set, and what it remembers of the sources that would
+ * not set.
  *
- * The backend owns typesetting and its cache, with nothing injected into the
- * model. A redraw rebuilds every label, so without this the engine would run
- * once per label per frame — and a source that will not set is remembered as
- * such for the same reason, or every redraw would retry it and report it again.
- * The refusal is kept as the refusal rather than as a note about one, so
- * whoever asks next is told exactly what the first caller was.
- */
-const runs = new Map<Source, GlyphRun | Error>();
-
-/** Set `source` now, whatever is remembered of it, and remember what it comes to. */
-async function setNow(source: Source): Promise<GlyphRun | Error> {
-  const settled = await typesetLatex(source).catch(
-    (failure: unknown) => new Error(messageOf(failure)),
-  );
-  runs.set(source, settled);
-  return settled;
-}
-
-/** What `source` came to, setting it if it never has been set before. */
-async function runOf(source: Source): Promise<GlyphRun | Error> {
-  return runs.get(source) ?? (await setNow(source));
-}
-
-/**
- * The run `source` sets to, or a rejection carrying the reason it will not.
+ * One store, and the backend's own: that it owns typesetting and what it
+ * remembers is the same stance that keeps glyph geometry from reaching the
+ * model, and nothing is injected into the shell. Why what a source came to is
+ * remembered at all, and which acts may retry it, is the store's own to say.
  *
- * A refusal already remembered is asked *again* rather than replayed, which is
- * what tells this door from {@link runOf}: someone submitting the same source a
- * second time is asking for exactly that, and a boot the engine got wrong once
- * would otherwise leave that source unsettable for the rest of the session. A
- * redraw asks nothing and takes the remembered answer.
+ * Everything below composes over it and adds this backend's own knowledge:
+ * which of a diagram's marks carry a label, and how much room one is given
+ * inside a box's walls.
  */
-async function mustSet(source: Source): Promise<GlyphRun> {
-  const known = runs.get(source);
-  const run = known === undefined || known instanceof Error ? await setNow(source) : known;
-  if (run instanceof Error) {
-    throw run;
-  }
-  return run;
-}
+const labels = createLabelStore();
 
 /**
  * Set `source`, rejecting where this backend cannot.
  *
  * The vetting the naming bar does before it will close: nothing typed puts a
  * source in a diagram that this backend cannot draw, so what is refused keeps
- * the bar open at its mark rather than becoming a mark with no label.
+ * the bar open at its mark rather than becoming a mark with no label. An ask,
+ * so a source refused once is asked again rather than held against the person
+ * re-submitting it.
  *
  * It hands back nothing. What setting a source produces is glyph geometry, and
  * that never leaves this backend — the caller asked whether the source can be
  * drawn, not for the drawing.
  */
 export async function vetSource(source: Source): Promise<void> {
-  await mustSet(source);
+  await labels.set(source);
 }
 
-/** A source that would not set, and what the typesetter said of it. */
-export interface Unset {
-  readonly source: Source;
-  readonly why: string;
-}
+// Passed straight through: what a source that would not set is called is the
+// store's word, and a caller of this backend has no second one to learn.
+export type { Unset };
 
 /**
  * Set every source in `diagram` that has never been set, and hand back the ones
@@ -436,18 +407,11 @@ export interface Unset {
  * box or dot still draws, the source stays in the diagram to be corrected, and
  * what could not be set is named here.
  *
- * Sources are set one after another rather than all at once, so a source two
- * marks share is set once.
+ * Which sources a diagram holds a label from is the whole of what this adds to
+ * a fill: a store is handed sources and knows nothing of boxes or dots.
  */
 export async function setLabelsOf(diagram: Diagram): Promise<readonly Unset[]> {
-  const unset: Unset[] = [];
-  for (const source of sourcesOf(diagram)) {
-    const run = await runOf(source);
-    if (run instanceof Error) {
-      unset.push({ source, why: run.message });
-    }
-  }
-  return unset;
+  return await labels.setAll(sourcesOf(diagram));
 }
 
 /** Every source the diagram holds a label this backend draws from. */
@@ -463,10 +427,12 @@ function sourcesOf(diagram: Diagram): readonly Source[] {
  *
  * The floor a drag is measured against, and the one thing only this backend can
  * answer: a transition takes an extent already floored, so the asynchrony and
- * the two ways typesetting can fail stay out here.
+ * the two ways typesetting can fail stay out here. An ask, and the room a label
+ * is given inside the walls — which is this backend's alone, the store knowing
+ * nothing of boxes.
  */
 export async function measureBox(source: Source): Promise<Pick<Extent, "w" | "h">> {
-  const run = await mustSet(source);
+  const run = await labels.set(source);
   return {
     w: toUnits(run.width) + 2 * LABEL_PADDING,
     h: toUnits(run.ascent + run.depth) + 2 * LABEL_PADDING,
