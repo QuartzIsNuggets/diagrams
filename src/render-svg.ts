@@ -13,7 +13,7 @@
 
 import { SVG_NS } from "./canvas";
 import type { Box, Diagram, Dot, DotSide, Extent, Point, Source } from "./diagram";
-import { DOT_SEPARATION, dotsIn, placeOf } from "./diagram";
+import { DOT_ROOM, dotsIn, placeOf } from "./diagram";
 import type { Started } from "./gesture";
 import { enableGesture } from "./gesture";
 import type { Unset } from "./label-store";
@@ -52,15 +52,15 @@ const BOX_STROKE = 2;
 const EXPORT_MARGIN = 16;
 
 /**
- * How big a term-dot is drawn: the largest the model's separation allows.
+ * How big a term-dot is drawn: the whole of the room the model keeps for it.
  *
- * Two dots exactly a {@link DOT_SEPARATION} apart touch at a point and no more,
- * so this is the most ink the constraint leaves room for. Taken from the model's
- * number rather than chosen beside it — the model names no size, and a backend
- * that picked one of its own could draw dots the model thinks stand clear
- * overlapping.
+ * The most ink the rules leave room for, and the model's own number rather than
+ * one chosen beside it — two dots exactly two rooms apart touch at a point and
+ * no more, and a dot a room inside a wall meets that wall and does not cross it.
+ * A backend picking a size of its own could draw dots overlapping that the model
+ * thinks stand clear, or ink outside a box the model thinks is inside one.
  */
-const DOT_RADIUS = DOT_SEPARATION / 2;
+const DOT_RADIUS = DOT_ROOM;
 
 /**
  * The y-up flip: the model's axis turned into SVG's, written once.

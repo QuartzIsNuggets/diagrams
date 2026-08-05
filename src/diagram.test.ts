@@ -16,7 +16,7 @@ import {
   addDot,
   boxAt,
   BOX_CLEARANCE,
-  DOT_SEPARATION,
+  DOT_ROOM,
   dotsIn,
   EMPTY_DIAGRAM,
   labelDot,
@@ -387,6 +387,9 @@ describe("what a point lands inside", () => {
 /** A box roomy enough for every dot placed below. */
 const ROOM = square(0, 0, 60);
 
+/** How far from `ROOM`'s centre a dot may stand, on either axis. */
+const CLEAR = ROOM.w / 2 - DOT_ROOM;
+
 /** What a landed release leaves, or a failure saying it was refused. */
 function placed(diagram: Diagram, at: Point): { diagram: Diagram; dot: DotId } {
   const next = addDot(diagram, at);
@@ -427,16 +430,38 @@ describe("a release the diagram refuses", () => {
     expect(addDot(EMPTY_DIAGRAM, { x: 0, y: 0 })).toBe("outside-every-box");
   });
 
-  it("is one closer to any dot down than the diagram lets two dots stand", () => {
-    const two = plopped(plopped(drawn(ROOM), { x: -20, y: 0 }), { x: 20, y: 0 });
+  it("is one whose room would take in the room of a dot already down", () => {
+    const left = { x: -20, y: 0 };
+    const two = plopped(plopped(drawn(ROOM), left), { x: 20, y: 0 });
     const before = structuredClone(two);
 
     expect(addDot(two, { x: 20, y: 0 })).toBe("too-close-to-a-dot");
-    expect(addDot(two, { x: DOT_SEPARATION - 21, y: 0 })).toBe("too-close-to-a-dot");
-    // Exactly a separation away is what the number means, so that one lands.
-    expect(plopped(two, { x: DOT_SEPARATION - 20, y: 0 }).dots).toHaveLength(3);
+    expect(addDot(two, { x: left.x + 2 * DOT_ROOM - 1, y: 0 })).toBe("too-close-to-a-dot");
+    // Two rooms apart is two rooms touching, which is clear, so that one lands.
+    expect(plopped(two, { x: left.x + 2 * DOT_ROOM, y: 0 }).dots).toHaveLength(3);
     // And what was refused was not half-applied on the way out.
     expect(two).toEqual(before);
+  });
+
+  it("is one whose room would take in the outside of its box: a dot straddling a wall", () => {
+    const one = drawn(ROOM);
+
+    expect(addDot(one, { x: CLEAR + 1, y: 0 })).toBe("too-near-a-wall");
+    expect(addDot(one, { x: 0, y: -(CLEAR + 1) })).toBe("too-near-a-wall");
+    // Exactly a room inside is the room touching the wall, which is clear.
+    expect(plopped(one, { x: CLEAR, y: 0 }).dots).toHaveLength(1);
+  });
+
+  it("is one in the band at a corner, where the room has two walls to keep inside of", () => {
+    const one = drawn(ROOM);
+
+    // Clear of each wall on its own is clear of the corner: a room is round, so
+    // the two axes are the whole of the rule and a corner cuts off nothing more.
+    expect(plopped(one, { x: CLEAR, y: CLEAR }).dots).toHaveLength(1);
+    // A hair past either wall, or both, and the room is outside the box.
+    expect(addDot(one, { x: CLEAR + 1, y: CLEAR })).toBe("too-near-a-wall");
+    expect(addDot(one, { x: CLEAR, y: CLEAR + 1 })).toBe("too-near-a-wall");
+    expect(addDot(one, { x: -(CLEAR + 1), y: -(CLEAR + 1) })).toBe("too-near-a-wall");
   });
 });
 

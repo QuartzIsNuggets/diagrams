@@ -16,7 +16,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createCanvas, SVG_NS } from "./canvas";
 import type { Diagram, DotId, DotSide, Extent, Point } from "./diagram";
-import { addBox, addDot, DOT_SEPARATION, EMPTY_DIAGRAM, labelDot } from "./diagram";
+import { addBox, addDot, DOT_ROOM, EMPTY_DIAGRAM, labelDot } from "./diagram";
 import {
   enableDragging,
   measureBox,
@@ -276,12 +276,14 @@ describe("a term-dot", () => {
     expect(drawnDots()[0]?.closest("g.box")).not.toBeNull();
   });
 
-  it("is small enough that two the model calls clear of each other are", () => {
+  it("is drawn no larger than the room the model keeps about its place", () => {
     renderDiagram(canvas, withDots({ x: 0, y: 0, w: 80, h: 40 }, { x: 0, y: 0 }));
 
-    // The model owns how far apart two dots stand and names no size; this is
-    // the whole of what a backend owes that number.
-    expect(2 * Number(drawnDots()[0]?.getAttribute("r"))).toBeLessThanOrEqual(DOT_SEPARATION);
+    // The model owns the room and names no size; this is the whole of what a
+    // backend owes that number, and it is what makes both of the model's rules
+    // true of the ink — two dots it calls clear of each other are, and one it
+    // calls inside its box keeps its ink inside the walls.
+    expect(Number(drawnDots()[0]?.getAttribute("r"))).toBeLessThanOrEqual(DOT_ROOM);
   });
 });
 

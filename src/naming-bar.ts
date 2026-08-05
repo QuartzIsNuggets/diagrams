@@ -324,7 +324,7 @@ function enableBalking(form: HTMLFormElement, reason: HTMLParagraphElement): (wh
  *
  * The tail owns the mark and the body finds the room. Position alone stopped
  * saying which mark is being named once there was no corner the bar visibly
- * travelled from — term-dots stand as little as a separation apart, and a box's
+ * travelled from — term-dots stand as little as two rooms apart, and a box's
  * wall is a hairline — so what points is a tail, and the body may go wherever it
  * has to for the tail to keep pointing. Above the mark unless the bar has
  * nowhere to be there, and then below; centred on the mark unless that would put

@@ -284,9 +284,20 @@ export function takeId<S extends Sort>(diagram: Diagram, _sort: S): readonly [Id
  * on.
  */
 export function boxAt(diagram: Diagram, at: Point): Box | undefined {
-  return diagram.boxes.find(
-    (box) => Math.abs(at.x - box.x) <= box.w / 2 && Math.abs(at.y - box.y) <= box.h / 2,
-  );
+  return diagram.boxes.find((box) => within(box, at, 0));
+}
+
+/**
+ * Whether a point with `room` about it lies inside `box`, touching a wall from
+ * within counting as inside.
+ *
+ * Both walls on an axis are the one comparison, the distance from the centre
+ * being what a wall is measured from — so a corner is no more a special case
+ * than a side is, the room being round. A point is a room of nothing, which is
+ * the whole of the difference between the two questions asked of this.
+ */
+function within(box: Box, at: Point, room: number): boolean {
+  return Math.abs(at.x - box.x) + room <= box.w / 2 && Math.abs(at.y - box.y) + room <= box.h / 2;
 }
 
 /**
@@ -480,7 +491,7 @@ function awayFrom(box: number, pusher: number, grower: number): number {
  * shell that grows a second way of reporting one still has only these to answer
  * for.
  */
-export type Refusal = "outside-every-box" | "too-close-to-a-dot";
+export type Refusal = "outside-every-box" | "too-close-to-a-dot" | "too-near-a-wall";
 
 /**
  * A placed term-dot — the diagram that has it, and which dot it is — or the
@@ -501,17 +512,23 @@ export type Refusal = "outside-every-box" | "too-close-to-a-dot";
 type Placed = { readonly diagram: Diagram; readonly dot: DotId } | Refusal;
 
 /**
- * The least a diagram lets two term-dots stand apart, in diagram units.
+ * The room a term-dot keeps about its place, in diagram units.
  *
- * The rule is the diagram's rather than the drawing's: two dots that are this
- * far apart are two dots however small or large a backend draws them, where a
- * rule measured in ink would say something different on every backend. Each
- * backend then draws a dot small enough that two of them this far apart stay
- * clear, which is the whole of what it owes this number.
+ * A dot is not a point, and the two rules about where one may go are the two
+ * things that may not be inside its room: another dot's room, and the outside of
+ * its box. So two dots stand two rooms apart and no dot straddles a wall, and
+ * both are read off this one number — a separation and a wall distance kept
+ * beside it would be two more numbers for the one fact they come from, free to
+ * drift out of step with it and with the ink.
+ *
+ * The rule is the diagram's rather than the drawing's: a dot with this much room
+ * has it however small or large a backend draws the dot, where a rule measured
+ * in ink would say something different on every backend. Each backend then draws
+ * a dot no larger than the room, which is the whole of what it owes this number.
  *
  * A placeholder, like {@link BOX_CLEARANCE}, until a drawing argues for another.
  */
-export const DOT_SEPARATION = 10;
+export const DOT_ROOM = 5;
 
 /**
  * Where a dot stands, its own place being relative to its box's centre.
@@ -538,29 +555,54 @@ export function dotsIn(diagram: Diagram, box: Box): readonly Dot[] {
  * reason it is refused.
  *
  * The release point decides everything: which box the dot goes in, and whether
- * it is far enough from the dots already drawn. A press that started somewhere
- * else is not consulted, so a press dragged onto a dot is refused exactly as a
- * release straight onto one is.
+ * the {@link DOT_ROOM} about it is free — inside that box's walls, and clear of
+ * every other dot's room. A press that started somewhere else is not consulted,
+ * so a press dragged onto a dot is refused exactly as a release straight onto
+ * one is.
  *
- * Separation is measured against every dot in the diagram rather than against
- * the box's own, because two dots a hair apart read as one mark whichever boxes
- * they are in. That no pair in different boxes can currently be that close —
- * a {@link BOX_CLEARANCE} keeps their walls further apart than that — is a fact
- * about two numbers rather than a rule, and not one to build the rule on.
+ * It refuses rather than making room, where {@link addBox} makes it: a dot lands
+ * where the button came up or does not land. Nor can a dot already placed be
+ * made illegal later — a dot is held relative to its box's centre, and a box
+ * only ever grows.
+ *
+ * The wall is asked about before the other dots, so a release refused by both
+ * is told the thing it can do least about: no dot fits there at all, where a
+ * crowded spot has room a few units away.
+ *
+ * Rooms are checked against every dot in the diagram rather than against the
+ * box's own, because two dots a hair apart read as one mark whichever boxes they
+ * are in. That no pair in different boxes can currently be that close — a
+ * {@link BOX_CLEARANCE} keeps their walls further apart than that — is a fact
+ * about two numbers rather than a rule, and not one to build the rule on. Walls
+ * are its own box's, on the other hand, and asking about any other's would be
+ * asking nothing: a dot is in exactly one box, and it is a term half outside
+ * *its* type that the notation has nothing to mean by.
  */
 export function addDot(diagram: Diagram, at: Point): Placed {
   const box = boxAt(diagram, at);
   if (!box) {
     return "outside-every-box";
   }
-  if (
-    placesOf(diagram).some((place) => Math.hypot(place.x - at.x, place.y - at.y) < DOT_SEPARATION)
-  ) {
+  if (!within(box, at, DOT_ROOM)) {
+    return "too-near-a-wall";
+  }
+  if (placesOf(diagram).some((place) => roomsOverlap(place, at))) {
     return "too-close-to-a-dot";
   }
   const [id, spent] = takeId(diagram, "dot");
   const placed: Dot = { id, box: box.id, x: at.x - box.x, y: at.y - box.y };
   return { diagram: { ...spent, dots: [...spent.dots, placed] }, dot: id };
+}
+
+/**
+ * Whether dots standing at these two places would be inside each other's room.
+ *
+ * Two rooms overlap exactly when their centres are closer than two rooms, and
+ * two exactly touching are clear — as a room touching a wall from within is
+ * inside it, the two rules agreeing on what touching means.
+ */
+function roomsOverlap(one: Point, other: Point): boolean {
+  return Math.hypot(other.x - one.x, other.y - one.y) < 2 * DOT_ROOM;
 }
 
 /** Where every dot in the diagram stands. */

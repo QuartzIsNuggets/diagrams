@@ -611,6 +611,18 @@ describe("a release with nowhere to put a dot", () => {
     expect(refusalText()).toMatch(/too close/iu);
   });
 
+  it("places none in the band inside a wall, and words that reason as its own", async () => {
+    await makeBox([40, 40], [240, 140]);
+
+    // Two units in from the left wall: inside the box, and not by enough for a
+    // dot's room. Nothing is down for it to be too close to.
+    dragOut(42, 100, 42, 100);
+
+    expect(dotsOn()).toHaveLength(0);
+    expect(refusalText()).toMatch(/wall/iu);
+    expect(refusalText()).not.toMatch(/too close/iu);
+  });
+
   it("is forgotten as soon as a dot lands", async () => {
     await makeBox([40, 40], [240, 140]);
     dragOut(100, 100, 500, 500);

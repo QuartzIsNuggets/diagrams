@@ -75,6 +75,8 @@ const REFUSALS: Record<Refusal, string> = {
     "A term-dot goes inside a box — a term outside a type is nothing a diagram can hold.",
   "too-close-to-a-dot":
     "Term-dots stand apart — that release is too close to a dot already placed.",
+  "too-near-a-wall":
+    "A term-dot sits inside its box — that release is too near a wall for one to fit.",
 };
 
 /**
