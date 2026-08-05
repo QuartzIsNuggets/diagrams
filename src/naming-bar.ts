@@ -347,10 +347,9 @@ function enableBalking(form: HTMLFormElement, reason: HTMLParagraphElement): (wh
  * added.
  *
  * Measured and placed rather than left to a percentage transform, which would be
- * the shorter way to say it and cannot be used: a transform makes a fixed
- * element a composited layer, and the layer lands on the fractional offset half
- * a `ch`-derived width comes to, which WebKit resamples into a blur. The bar is
- * on the page by now, so there is a rectangle to measure.
+ * the shorter way to say it and cannot be used — see ADR 5,
+ * agents-working-files/docs/adr/0005-chrome-is-placed-never-translated.md. The
+ * bar is on the page by now, so there is a rectangle to measure.
  */
 function hangAt(form: HTMLFormElement, at: PagePoint): void {
   const { width, height } = form.getBoundingClientRect();

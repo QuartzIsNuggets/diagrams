@@ -70,12 +70,11 @@ body {
 
 /* The tail, on whichever edge faces the mark: a triangle in the input's border
    colour, so it reads as that border carried to a point rather than a shape
-   stuck on. Placed along the edge by `left` and never by a transform — a
-   transform would make this a composited layer landing on a fractional offset,
-   which WebKit resamples into a blur. Both custom properties are naming-bar.ts's
-   own: it is the module that knows which mark the tail is aimed at, and the size
-   travels with them so the triangle and the room the body stands off by are the
-   one number. */
+   stuck on. Placed along the edge by `left` and never by a transform — see
+   ADR 5, agents-working-files/docs/adr/0005-chrome-is-placed-never-translated.md.
+   Both custom properties are naming-bar.ts's own: it is the module that knows
+   which mark the tail is aimed at, and the size travels with them so the
+   triangle and the room the body stands off by are the one number. */
 .naming-bar::after {
   content: "";
   position: absolute;
@@ -101,9 +100,9 @@ body {
    refusal happened *now* where the line above the input says what was wrong. The
    tail swings with the body, so the bar comes back onto its mark rather than
    pointing somewhere new. A transform where the tail's placement is careful to
-   avoid one: what that rules out is a bar left standing on a fractional offset,
-   which WebKit resamples into a blur, and this one is over in a fifth of a
-   second and ends at none. */
+   avoid one, and this one is over in a fifth of a second and ends at `none` —
+   motion, not placement — see ADR 5,
+   agents-working-files/docs/adr/0005-chrome-is-placed-never-translated.md. */
 .naming-bar.balking {
   animation: balking 200ms;
 }
@@ -208,15 +207,26 @@ body {
 }
 
 /* The canvas's own region, for a gesture that put nothing on it. At the top,
-   clear of the export control's corner and of the rectangle that just went. */
+   clear of the export control's corner and of the rectangle that just went.
+   Pinned to both edges, with the room left over halved by auto margins — see
+   ADR 5, agents-working-files/docs/adr/0005-chrome-is-placed-never-translated.md.
+   Only as wide as its wording, so what it covers of the canvas is what it says
+   and no more.
+
+   The line is given room rather than left at `normal`, which is the second thing
+   being fixed makes of a thing: the layer is clipped to the border box, so ink
+   hanging below the line — the tail of a "g", of a "p", of a "y" — is cut off
+   flat. Room enough for the descenders is room enough for the clip. */
 .canvas-error {
   position: fixed;
   top: 16px;
-  left: 50%;
-  transform: translateX(-50%);
+  right: 16px;
+  left: 16px;
+  width: fit-content;
+  margin-inline: auto;
   max-width: 60ch;
   font:
-    14px system-ui,
+    14px/1.4 system-ui,
     sans-serif;
   text-align: center;
 }
