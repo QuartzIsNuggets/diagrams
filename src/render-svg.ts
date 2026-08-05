@@ -15,6 +15,8 @@ import { SVG_NS } from "./canvas";
 import type { Box, Diagram, Dot, DotSide, Extent, Point, Source } from "./diagram";
 import { DOT_SEPARATION, dotsIn, placeOf } from "./diagram";
 import { messageOf } from "./failure";
+import type { Started } from "./gesture";
+import { enableGesture } from "./gesture";
 import { BOX_INK, INK } from "./palette";
 import type { GlyphRun } from "./typesetting";
 import { typesetLatex, UNITS_PER_EM } from "./typesetting";
@@ -516,110 +518,34 @@ function showProvisionalBox(canvas: SVGSVGElement, extent: Extent): void {
   rect.setAttribute("height", String(extent.h));
 }
 
-/** `PointerEvent.button` for the left mouse button — the one that draws. */
-const PRIMARY_BUTTON = 0;
-
 /**
- * What a gesture leaves on the canvas while it runs.
+ * Let a gesture on `canvas` draw, in diagram units.
  *
- * The press settles this along with everything else it settles, and the shell is
- * what settles it: which mark is being made is the shell's to know, and how much
- * of it shows before it lands follows from that. All this backend owns is the
- * drawing of it.
- */
-type Provisional = "rectangle" | "nothing";
-
-/** What a press starts: a gesture showing one of those, or no gesture at all. */
-export type Started = Provisional | "no-gesture";
-
-/** A gesture in flight: where it began, and what it shows while it runs. */
-interface Running {
-  readonly from: Point;
-  readonly shows: Provisional;
-}
-
-/**
- * Follow a press-drag-release across `canvas`, in diagram units.
+ * The two things a gesture cannot know, and the whole of what this backend adds
+ * to one: where a pointer is on the plane the diagram is measured in, and what a
+ * rectangle following it looks like. Both stay private — that is the point of
+ * composing over {@link enableGesture} rather than exporting the parts.
  *
- * The press decides whether there is a gesture at all and what it shows while it
- * runs — `starts` is asked where it landed, and answers with nothing where the
- * press means nothing here — and the release decides where the gesture lands. So
- * no threshold tells a click from a drag: a click is a drag of no size, and what
- * it makes was settled before the pointer moved.
- *
- * `lands` is given both the rectangle the drag swept and the point it was let go
- * of, a gesture that makes a box wanting the first and one that places a dot the
- * second. A rectangle it drew is left standing where it lands, for `lands` to
- * take down when it is done with it.
- *
- * Move and release are watched on the window, ahead of anything on the canvas: a
- * drag has to be followed off the canvas and let go of anywhere, and the release
- * belongs to the gesture the press started rather than to whatever else was
- * listening for one.
+ * Nothing to show is nothing to draw. A gesture showing no rectangle has never
+ * drawn one to take down, and the rectangle a landed one leaves standing is
+ * {@link clearChrome}'s to remove when whatever took it up is done with it.
  */
 export function enableDragging(
   canvas: SVGSVGElement,
   starts: (at: Point) => Started,
   lands: (drag: Extent, at: Point) => void,
 ): void {
-  let gesture: Running | undefined;
-
-  canvas.addEventListener("pointerdown", (event: PointerEvent) => {
-    if (event.button !== PRIMARY_BUTTON) {
-      return;
-    }
-    // Before asking what the press means, and whatever the answer: a press on
-    // the canvas is never the start of a text selection. Left to the UA it is,
-    // and the UA then owns the cursor for as long as the button is down and
-    // paints an I-beam over the drag. `user-select: none` on the canvas does not
-    // cover this — the anchor moves to the selectable page around it rather than
-    // ceasing to exist, so the selection runs into the bar and the Export button.
-    event.preventDefault();
-    const at = toDiagramPoint(canvas, event);
-    const shows = starts(at);
-    if (shows === "no-gesture") {
-      return;
-    }
-    gesture = { from: at, shows };
-    showRunning(canvas, gesture, at);
-  });
-
-  window.addEventListener("pointermove", (event: PointerEvent) => {
-    showRunning(canvas, gesture, toDiagramPoint(canvas, event));
-  });
-
-  window.addEventListener(
-    "pointerup",
-    (event: PointerEvent) => {
-      if (!gesture || event.button !== PRIMARY_BUTTON) {
-        return;
+  enableGesture(
+    canvas,
+    (event) => toDiagramPoint(canvas, event),
+    (drag) => {
+      if (drag !== undefined) {
+        showProvisionalBox(canvas, drag);
       }
-      event.stopImmediatePropagation();
-      const at = toDiagramPoint(canvas, event);
-      const drag = extentBetween(gesture.from, at);
-      showRunning(canvas, gesture, at);
-      gesture = undefined;
-      lands(drag, at);
     },
-    { capture: true },
+    starts,
+    lands,
   );
-}
-
-/** How far a gesture has got, for one that shows anything at all. */
-function showRunning(canvas: SVGSVGElement, gesture: Running | undefined, at: Point): void {
-  if (gesture?.shows === "rectangle") {
-    showProvisionalBox(canvas, extentBetween(gesture.from, at));
-  }
-}
-
-/** The rectangle a drag between two points asks for. */
-function extentBetween(from: Point, to: Point): Extent {
-  return {
-    x: (from.x + to.x) / 2,
-    y: (from.y + to.y) / 2,
-    w: Math.abs(to.x - from.x),
-    h: Math.abs(to.y - from.y),
-  };
 }
 
 /** Take back every provisional mark: the gesture has landed, or has not. */

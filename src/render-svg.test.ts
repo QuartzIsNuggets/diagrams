@@ -3,16 +3,16 @@
 // SPDX-License-Identifier: MIT
 
 // The backend seam: where pixels stop. What is tested here is everything that
-// needs a document to be true — the conversion, the flip, and the rules a
-// press-drag-release goes by. The geometry those rules hand on is the diagram's
-// own and is tested in diagram.test.ts, with no DOM at all.
+// needs a document to be true — the conversion, the flip, and the ink. The
+// geometry it draws from is the diagram's own and is tested in diagram.test.ts
+// with no DOM at all; what a press means is the gesture's, and is tested in
+// gesture.test.ts with no canvas.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createCanvas, SVG_NS } from "./canvas";
 import type { Diagram, DotId, DotSide, Extent, Point } from "./diagram";
 import { addBox, addDot, DOT_SEPARATION, EMPTY_DIAGRAM, labelDot } from "./diagram";
-import type { Started } from "./render-svg";
 import {
   clearChrome,
   enableDragging,
@@ -113,15 +113,14 @@ function withNamedDot(extent: Extent, at: Point, source: string, side: DotSide =
  * The conversion and the provisional rectangle are the backend's own business,
  * so they are reached the way the shell reaches them — through a gesture — and
  * what lands is the only thing that crosses out in diagram units.
- *
- * A gesture started here has to be let go of before the test ends: the app wires
- * one canvas for its lifetime, so watching the window costs it nothing, but a
- * suite wires one per test and a drag left half-finished claims the *next*
- * test's release.
  */
-function draggingLands(starts: (at: Point) => Started = () => "rectangle"): Extent[] {
+function draggingLands(): Extent[] {
   const landed: Extent[] = [];
-  enableDragging(canvas, starts, (drag) => landed.push(drag));
+  enableDragging(
+    canvas,
+    () => "rectangle",
+    (drag) => landed.push(drag),
+  );
   return landed;
 }
 
@@ -477,126 +476,6 @@ describe("the extent a source needs", () => {
   });
 });
 
-describe("the rectangle a press-drag-release hands on", () => {
-  it("runs between the press and the release, in diagram units", () => {
-    offsetCanvasBy(30, 12);
-    const landed = draggingLands();
-
-    pressAt(50, 32);
-    releaseAt(150, 132);
-
-    expect(landed).toEqual([{ x: 70, y: -70, w: 100, h: 100 }]);
-  });
-
-  it("is the same rectangle whichever way the drag ran", () => {
-    const landed = draggingLands();
-
-    pressAt(150, 130);
-    releaseAt(50, 30);
-
-    expect(landed).toEqual([{ x: 100, y: -80, w: 100, h: 100 }]);
-  });
-
-  it("needs no threshold: a click is a drag of no size", () => {
-    const landed = draggingLands();
-
-    pressAt(40, 40);
-    releaseAt(40, 40);
-
-    expect(landed).toEqual([{ x: 40, y: -40, w: 0, h: 0 }]);
-  });
-});
-
-describe("a gesture that shows nothing while it runs", () => {
-  /** Wire the canvas for a gesture drawing no chrome, and collect where it lands. */
-  function releasesAt(): Point[] {
-    const landed: Point[] = [];
-    enableDragging(
-      canvas,
-      () => "nothing",
-      (_drag, at) => landed.push(at),
-    );
-    return landed;
-  }
-
-  it("draws no rectangle, which would say a box was coming", () => {
-    releasesAt();
-
-    pressAt(40, 40);
-    moveTo(140, 90);
-
-    expect(canvas.querySelector("g.chrome")).toBeNull();
-    releaseAt(140, 90);
-    expect(canvas.querySelector("g.chrome")).toBeNull();
-  });
-
-  it("still hands on where it was let go of, which is all a dot needs", () => {
-    const landed = releasesAt();
-
-    pressAt(40, 40);
-    releaseAt(140, 90);
-
-    expect(landed).toEqual([{ x: 140, y: -90 }]);
-  });
-});
-
-describe("what never lands a rectangle", () => {
-  it("a press on its own, however far it is dragged", () => {
-    const landed = draggingLands();
-
-    pressAt(40, 40);
-    moveTo(90, 90);
-
-    expect(landed).toEqual([]);
-    // Let it go, so no half-finished gesture is left watching the window.
-    releaseAt(90, 90);
-  });
-
-  it("a press of a non-primary button", () => {
-    const landed = draggingLands();
-
-    canvas.dispatchEvent(
-      new PointerEvent("pointerdown", { clientX: 40, clientY: 40, button: 2, bubbles: true }),
-    );
-    releaseAt(90, 90);
-
-    expect(landed).toEqual([]);
-  });
-
-  it("a press the diagram does not allow one to start from", () => {
-    const landed = draggingLands(() => "no-gesture");
-
-    pressAt(40, 40);
-    releaseAt(90, 90);
-
-    expect(landed).toEqual([]);
-    expect(canvas.querySelector("g.chrome")).toBeNull();
-  });
-});
-
-describe("who a release belongs to", () => {
-  let other: ReturnType<typeof vi.fn>;
-
-  beforeEach(() => {
-    other = vi.fn();
-    enableDragging(canvas, () => "rectangle", vi.fn());
-    canvas.addEventListener("pointerup", other);
-  });
-
-  it("is the gesture the press started, and nothing else listening for one", () => {
-    pressAt(40, 40);
-    releaseAt(90, 90);
-
-    expect(other).not.toHaveBeenCalled();
-  });
-
-  it("is whatever else was listening, where no press of its own started one", () => {
-    releaseAt(90, 90);
-
-    expect(other).toHaveBeenCalledOnce();
-  });
-});
-
 describe("the rectangle a box is drawn in", () => {
   it("follows the drag, and is chrome rather than diagram", () => {
     draggingLands();
@@ -608,6 +487,8 @@ describe("the rectangle a box is drawn in", () => {
     expect(chrome?.getAttribute("pointer-events")).toBe("none");
     expect(cornerOf(chrome?.querySelector("rect"))).toEqual(["40", "-90", "100", "50"]);
     expect(drawnBoxes()).toHaveLength(0);
+    // Let it go: a drag left in flight is still watching the window, and would
+    // claim the next test's release.
     releaseAt(140, 90);
   });
 
@@ -620,6 +501,20 @@ describe("the rectangle a box is drawn in", () => {
 
     clearChrome(canvas);
 
+    expect(canvas.querySelector("g.chrome")).toBeNull();
+  });
+
+  it("is never drawn at all for a gesture with nothing to show", () => {
+    // Nothing to show is nothing to draw, which is the backend's half of the
+    // answer — that such a gesture is shown nothing is the gesture's own, and
+    // is asserted in gesture.test.ts.
+    enableDragging(canvas, () => "nothing", vi.fn());
+
+    pressAt(40, 40);
+    moveTo(140, 90);
+    expect(canvas.querySelector("g.chrome")).toBeNull();
+
+    releaseAt(140, 90);
     expect(canvas.querySelector("g.chrome")).toBeNull();
   });
 });
